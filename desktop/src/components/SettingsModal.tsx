@@ -61,7 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // 版本检测状态
   const [checkVersionStatus, setCheckVersionStatus] = useState<"idle" | "checking" | "latest" | "has_update" | "error">("idle");
   const [latestVersion, setLatestVersion] = useState<string>("");
-  const [releaseUrl, setReleaseUrl] = useState<string>("https://github.com/dotcom888/super-harnes/releases");
+  const [releaseUrl, setReleaseUrl] = useState<string>("https://github.com/dotcom888/super-harness/releases");
   const [downloadAssetUrl, setDownloadAssetUrl] = useState<string>("");
   const [updateNote, setUpdateNote] = useState<string>("");
 
@@ -76,7 +76,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setCheckVersionStatus("checking");
     const startTime = Date.now();
     try {
-      const res = await fetch("https://api.github.com/repos/dotcom888/super-harnes/releases/latest", {
+      const res = await fetch("https://api.github.com/repos/dotcom888/super-harness/releases/latest", {
         headers: { Accept: "application/vnd.github.v3+json" }
       });
       if (!res.ok) {
@@ -86,7 +86,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const tag = (data.tag_name || data.name || "").trim();
       const currentVer = "v5.7.14";
       setLatestVersion(tag || "未知");
-      const htmlUrl = data.html_url || "https://github.com/dotcom888/super-harnes/releases";
+      const htmlUrl = data.html_url || "https://github.com/dotcom888/super-harness/releases";
       setReleaseUrl(htmlUrl);
       setUpdateNote(data.body ? data.body.slice(0, 180) : "");
 
@@ -913,7 +913,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleOpenRelease("https://github.com/dotcom888/super-harnes/releases")}
+                      onClick={() => handleOpenRelease("https://github.com/dotcom888/super-harness/releases")}
                       className="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0"
                     >
                       访问 Releases
