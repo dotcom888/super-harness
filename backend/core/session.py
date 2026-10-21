@@ -31,6 +31,7 @@ class SessionManager:
         project_name: Optional[str] = None
     ):
         ws = workspace or default_workspace
+        self.workspace = ws
         self.project_name = project_name or ws.root.name
 
         if history_dir:
@@ -86,7 +87,8 @@ class SessionManager:
                 session_id=sid,
                 base_dir=self.base_dir,
                 project_state=self.project_state,
-                project_name=self.project_name
+                project_name=self.project_name,
+                workspace=self.workspace
             )
             if auto_restore and mgr.history_file.exists():
                 mgr.restore_from_disk()
@@ -129,7 +131,8 @@ class SessionManager:
             session_id=sid,
             base_dir=self.base_dir,
             project_state=self.project_state,
-            project_name=self.project_name
+            project_name=self.project_name,
+            workspace=self.workspace
         )
         mgr.clear()
         self._sessions[sid] = mgr
@@ -208,7 +211,8 @@ class SessionManager:
             session_id=new_sid,
             base_dir=self.base_dir,
             project_state=self.project_state,
-            project_name=self.project_name
+            project_name=self.project_name,
+            workspace=self.workspace
         )
         if new_file.exists():
             new_mgr.restore_from_disk()

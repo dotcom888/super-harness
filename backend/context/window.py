@@ -1,5 +1,6 @@
+import time
 # -*- coding: utf-8 -*-
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple, Set, Optional
 from context.token_counter import TokenCounter, default_token_counter
 
 class TurnChunk:
@@ -8,9 +9,12 @@ class TurnChunk:
     将一次完整的交互及其内部的所有 ReAct 工具调用、参数、结果与回答打包。
     严格保证 tool_calls 与 tool 结果成对绑定，不可拆分。
     """
-    def __init__(self, turn_id: int):
+    def __init__(self, turn_id: int, start_time: Optional[float] = None):
         self.turn_id = turn_id
         self.messages: List[Dict[str, Any]] = []
+        self.start_time: float = start_time if start_time is not None else time.time()
+        self.end_time: Optional[float] = None
+        self.elapsed: float = 0.0
 
     def add_message(self, msg: Dict[str, Any]):
         self.messages.append(msg)
@@ -82,7 +86,10 @@ class TurnChunk:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "turn_id": self.turn_id,
-            "messages": self.messages
+            "messages": self.messages,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "elapsed": self.elapsed
         }
 
 

@@ -279,7 +279,8 @@ class ContextManager:
         summarizer: Optional[ContextSummarizer] = None,
         base_dir: Optional[Path] = None,
         project_state: Optional[Any] = None,
-        project_name: Optional[str] = None
+        project_name: Optional[str] = None,
+        workspace: Optional[Any] = None
     ):
         self.session_id = session_id
         self.budget = budget_ledger.copy() if budget_ledger else default_budget_ledger.copy()
@@ -301,10 +302,10 @@ class ContextManager:
         self.total_api_completion_tokens: int = 0
         self.total_api_cached_tokens: int = 0
 
-        self.workspace = default_workspace
+        self.workspace = workspace or default_workspace
         self._base_dir = Path(base_dir).resolve() if base_dir else None
         self.project_name = project_name
-        self.snapshot_manager = default_snapshot_manager
+        self.snapshot_manager = SnapshotManager(workspace=self.workspace) if (workspace and workspace != default_workspace) else default_snapshot_manager
         self.last_rolled_back_files = []
 
         # 确保动态历史归档目录就绪
@@ -454,8 +455,9 @@ class ContextManager:
         llm_content: Optional[Any] = None,
         permission_mode: Optional[str] = None
     ):
+        now_ts = time.time()
         self.turn_count += 1
-        self.current_turn = TurnChunk(turn_id=self.turn_count)
+        self.current_turn = TurnChunk(turn_id=self.turn_count, start_time=now_ts)
         if hasattr(self, "snapshot_manager") and self.snapshot_manager:
             self.snapshot_manager.set_active_turn(self.session_id, self.turn_count)
 
@@ -534,9 +536,14 @@ class ContextManager:
             self.current_turn.add_message(tool_msg)
             self._append_to_disk("tool_result", tool_msg)
 
-    def finish_current_turn(self):
+    def finish_current_turn(self, elapsed: Optional[float] = None):
         if self.current_turn:
             self.current_turn.sanitize_unpaired_calls()
+            now_ts = time.time()
+            self.current_turn.end_time = now_ts
+            calc_elapsed = round(max(1.0, now_ts - self.current_turn.start_time), 1)
+            turn_elapsed = float(elapsed) if (elapsed is not None and elapsed > 0) else calc_elapsed
+            self.current_turn.elapsed = turn_elapsed
             
             # 记录本轮完成时的状态快照（用于原子化回滚）
             snapshot = {
@@ -548,6 +555,9 @@ class ContextManager:
             self.completed_turns.append(self.current_turn)
             self._append_to_disk("turn_finished", {
                 "turn_id": self.current_turn.turn_id,
+                "elapsed": turn_elapsed,
+                "start_time": self.current_turn.start_time,
+                "end_time": self.current_turn.end_time,
                 "working_memory": snapshot["working_memory"],
                 "summary_state": snapshot["summary_state"]
             })
@@ -580,7 +590,15 @@ class ContextManager:
                     self.summarizer.clear()
 
             self.turn_count = max(0, self.turn_count - 1)
-            self._append_to_disk("rollback", {"turn_id": rolled_turn_id})
+            if self.completed_turns or self.session_id == "default":
+                self._append_to_disk("rollback", {"turn_id": rolled_turn_id})
+            else:
+                if self.history_file.exists():
+                    try:
+                        self.history_file.unlink()
+                        logger.info(f"会话轮次已归零，物理删除历史落盘文件: {self.history_file.name}")
+                    except Exception as e:
+                        logger.warning(f"删除已清空会话文件失败: {e}")
 
             self.last_rolled_back_files = []
             if restore_disk and hasattr(self, "snapshot_manager") and self.snapshot_manager:
@@ -621,11 +639,15 @@ class ContextManager:
                 snapshot_map = {s["turn_id"]: s for s in self._state_snapshots}
                 for chunk in self.completed_turns:
                     tid = chunk.turn_id
+                    c_start = getattr(chunk, "start_time", time.time())
+                    c_elapsed = getattr(chunk, "elapsed", 1.0)
+                    c_end = getattr(chunk, "end_time", c_start + c_elapsed)
                     for msg in chunk.messages:
                         role = msg.get("role")
                         rec_type = "user_message" if role == "user" else ("tool_result" if role == "tool" else "assistant_message")
+                        msg_ts = msg.get("timestamp") or (c_start if role == "user" else c_end)
                         entries.append({
-                            "timestamp": time.time(),
+                            "timestamp": msg_ts,
                             "session_id": self.session_id,
                             "turn_id": tid,
                             "type": rec_type,
@@ -636,12 +658,15 @@ class ContextManager:
                         "summary_state": self.summarizer.state.to_dict() if tid == self.turn_count else {}
                     })
                     entries.append({
-                        "timestamp": time.time(),
+                        "timestamp": c_end,
                         "session_id": self.session_id,
                         "turn_id": tid,
                         "type": "turn_finished",
                         "data": {
                             "turn_id": tid,
+                            "elapsed": c_elapsed,
+                            "start_time": c_start,
+                            "end_time": c_end,
                             "working_memory": snap.get("working_memory", {}),
                             "summary_state": snap.get("summary_state", {})
                         }
@@ -737,6 +762,13 @@ class ContextManager:
                     elif rec_type == "turn_finished":
                         finished_turn_ids.add(turn_id)
                         data = record.get("data", {})
+                        if turn_id in loaded_turns:
+                            if "elapsed" in data:
+                                loaded_turns[turn_id].elapsed = float(data["elapsed"])
+                            if "start_time" in data:
+                                loaded_turns[turn_id].start_time = float(data["start_time"])
+                            if "end_time" in data:
+                                loaded_turns[turn_id].end_time = float(data["end_time"])
                         if "working_memory" in data and data["working_memory"]:
                             wm_history[turn_id] = data["working_memory"]
                         if "summary_state" in data and data["summary_state"]:

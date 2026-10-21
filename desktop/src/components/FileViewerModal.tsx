@@ -37,7 +37,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ filePath, onCl
   const lines = content.split("\n");
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex justify-end transition-opacity">
+    <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} className="fixed inset-0 z-[100] bg-black/30 backdrop-blur-xs flex justify-end transition-opacity">
       <div className="w-[680px] h-full bg-white shadow-2xl flex flex-col border-l border-gray-200 animate-in slide-in-from-right duration-200">
         {/* 顶部标题栏 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">

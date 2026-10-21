@@ -24,6 +24,7 @@ import {
 import { ModelProvider } from "../types";
 import { ConfirmModal } from "./ConfirmModal";
 import { LOGO_DATA_URI } from "../assets/logoData";
+import { useModalTransition } from "../utils/useModalTransition";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -50,8 +51,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSelectFontSize,
   initialTab = "models"
 }) => {
-  if (!isOpen) return null;
-
   const [activeTab, setActiveTab] = useState<"models" | "security" | "general" | "about">("models");
   const [providers, setProviders] = useState<ModelProvider[]>([]);
   const [editingProvider, setEditingProvider] = useState<ModelProvider | null>(null);
@@ -148,16 +147,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen, initialTab]);
 
+  const { mounted, visible } = useModalTransition(isOpen, 300);
+
   const fetchProviders = () => {
     fetch("http://127.0.0.1:8765/api/models/providers")
       .then((res) => res.json())
       .then((data) => {
         if (data.providers) {
           setProviders(data.providers);
+          // 若当前正在编辑的提供方已不在最新列表中，自动收起展开表单
+          setEditingProvider((prev) => {
+            if (!prev) return null;
+            const exists = (data.providers as ModelProvider[]).some(
+              (p) => p.id === prev.id || p.name === prev.name
+            );
+            return exists ? prev : null;
+          });
         }
       })
       .catch(() => {});
   };
+
+  if (!mounted) return null;
 
   const handleOpenEdit = (p: ModelProvider) => {
     setEditingProvider(p);
@@ -208,6 +219,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsTesting(true);
     setTestResult(null);
 
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), 10000);
+
     try {
       const res = await fetch("http://127.0.0.1:8765/api/models/test", {
         method: "POST",
@@ -217,8 +231,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           api_key: trimmedKey,
           model: firstModel || undefined,
           protocol: formProtocol
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutTimer);
       const data = await res.json();
       if (res.ok && data.success) {
         setTestResult({ success: true, message: data.message || "接口连通正常，鉴权通过！" });
@@ -226,7 +242,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         setTestResult({ success: false, message: data.error || data.detail || "连接失败，请检查 Base URL 与 API Key" });
       }
     } catch (err: any) {
-      setTestResult({ success: false, message: "请求服务失败: " + err.message });
+      clearTimeout(timeoutTimer);
+      if (err.name === "AbortError") {
+        setTestResult({ success: false, message: "测试连接超时（超过 10 秒无响应），请检查上游代理服务（如 Antigravity Tools）运行状态与网络代理。" });
+      } else {
+        setTestResult({ success: false, message: "请求服务失败: " + err.message });
+      }
     } finally {
       setIsTesting(false);
     }
@@ -310,6 +331,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const id = pendingDeleteProviderId;
     setPendingDeleteProviderId(null);
 
+    // 若当前展开编辑的正巧是被删除的提供方，立即清空编辑状态与验证提示，杜绝幽灵残留
+    if (editingProvider && (editingProvider.id === id || editingProvider.name === id)) {
+      setEditingProvider(null);
+      setIsAddingCustom(false);
+      setValidationError("");
+      setSaveSuccessMsg("");
+    }
+
     fetch(`http://127.0.0.1:8765/api/models/providers/${id}`, {
       method: "DELETE"
     })
@@ -326,9 +355,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
-      {/* 左右结构主容器：宽度减半至约原来的一半 (w-[92vw] max-w-[690px] h-[88vh])，高度不变 */}
-      <div className="w-[92vw] max-w-[690px] h-[88vh] max-h-[840px] bg-white dark:bg-[#12141c] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#222634] overflow-hidden flex flex-row animate-in fade-in zoom-in-95 duration-150 select-none transition-colors">
+    <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} className={`fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-3 transition-opacity duration-300 ease-out ${visible ? "opacity-100" : "opacity-0"} ${isOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+      {/* 点击遮罩空白区域亦可快速平滑关闭弹窗 */}
+      <div className="absolute inset-0" onClick={onClose} />
+      {/* 左右结构主容器：在原有 690px 基础上加宽 30% 至 897px，新增宽度全部由右侧内容区吸收 */}
+      <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} onClick={(e) => e.stopPropagation()} className={`relative z-10 w-[96vw] max-w-[897px] h-[88vh] max-h-[840px] bg-white dark:bg-[#12141c] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#222634] overflow-hidden flex flex-row select-none transition-all duration-300 ease-out ${visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-2"}`}>
         {/* 1. 左侧导航边栏 (紧凑宽度 w-44，留出主内容空间) */}
         <aside className="w-44 h-full bg-[#f8f9fa] dark:bg-[#0d0f15] border-r border-gray-200/80 dark:border-[#1e222f] flex flex-col justify-between p-3 shrink-0 transition-colors">
           <div>
@@ -409,8 +440,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </span>
             <button 
               type="button"
-              onClick={onClose} 
-              className="w-9 h-9 flex items-center justify-center text-gray-400 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 rounded-xl transition cursor-pointer hover:bg-gray-100 dark:hover:bg-[#20222f] titlebar-no-drag z-30"
+              onClick={onClose}
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+              className="relative z-50 w-9 h-9 flex items-center justify-center text-gray-400 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 rounded-xl transition cursor-pointer hover:bg-gray-100 dark:hover:bg-[#20222f] titlebar-no-drag"
               title="关闭设置"
             >
               <X size={18} />
@@ -827,22 +859,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                {/* 3. 模型与预算参数 */}
-                <div className="space-y-3 pt-3 border-t border-gray-100 dark:border-[#1e222f]">
-                  <div>
-                    <label className="block text-gray-700 dark:text-gray-300 font-medium mb-1">当前默认激活推理模型</label>
-                    <div className="px-3 py-2 bg-gray-50 dark:bg-[#181a24] border border-gray-200 dark:border-[#262a38] rounded-xl font-mono text-gray-800 dark:text-gray-200">
-                      {currentModel}
-                    </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-gray-700 dark:text-gray-300 font-medium mb-1">上下文注意力预算水位</label>
-                    <div className="px-3 py-2 bg-gray-50 dark:bg-[#181a24] border border-gray-200 dark:border-[#262a38] rounded-xl text-gray-600 dark:text-gray-300">
-                      200,000 Tokens 基线预算 · 弹性最高支持 500,000 Tokens
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 

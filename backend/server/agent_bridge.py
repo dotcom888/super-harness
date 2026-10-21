@@ -153,6 +153,12 @@ class AgentBridge:
         self.default_agent = val
 
     def _resolve_model_config(self, ag_model: str) -> tuple[str, str, str]:
+        import importlib
+        import config.model_resolver
+        try:
+            importlib.reload(config.model_resolver)
+        except Exception:
+            pass
         from config.model_resolver import resolve_active_model_config
         _, final_key, final_base_url, _ = resolve_active_model_config(model=ag_model)
         return final_key, final_base_url, "openai_chat"
@@ -372,7 +378,7 @@ class AgentBridge:
         raw_cmd = prompt.strip()
         cmd_lower = raw_cmd.lower()
 
-        if cmd_lower in ("/clear", "/reset"):
+        if cmd_lower in ("/clear", "/reset", "/new"):
             # 清空当前会话的上下文与内存记录
             if cur_agent.context_manager:
                 try:
@@ -398,15 +404,33 @@ class AgentBridge:
 
         elif cmd_lower == "/help":
             help_text = (
-                "### ⚡ super 智能体快捷指令一览：\n\n"
+                "### ⚡ super 智能体快捷指令一览（共 21 个）\n\n"
+                "**任务执行**\n"
                 "- `/init` : **初始化感知** - 扫描项目目录结构、技术栈与依赖环境\n"
                 "- `/review` : **代码走查审查** - 对指定模块进行架构审查、潜在漏洞与规范体检\n"
                 "- `/test` : **运行项目测试** - 执行本地自动化测试套件 (pytest/npm test) 并分析报错\n"
                 "- `/fix` : **诊断与 Bug 修复** - 根据报错日志定位根因，应用最小侵入式补丁修复\n"
                 "- `/explain` : **代码原理解析** - 深入剖析复杂函数或架构实现的底层运作原理\n"
                 "- `/compact` : **压缩会话记忆** - 智能浓缩历史上下文，释放注意力窗口与 token 预算\n"
-                "- `/clear` : **清空重置会话** - 重置当前对话记录，开启全新独立交互轮次\n"
-                "- `/status` : **查看系统状态** - 查看当前模型、工作区与 MCP 工具状态\n"
+                "\n**技能与扩展**\n"
+                "- `/skills` : **技能库清单** - 查看已加载的全部 Skills 专家技能与 SOP 规约\n"
+                "- `/skill` : **技能详情** - 查看指定技能的完整执行规约（用法：`/skill <名称>`）\n"
+                "- `/mcp` : **MCP 服务状态** - 探测 MCP 扩展服务、工具挂载与级联配置路径\n"
+                "\n**会话与记忆**\n"
+                "- `/status` : **系统状态** - 查看当前模型、工作区、安全模式与工具挂载状态\n"
+                "- `/memory` : **工作记忆** - 查看当前工作区感知、目标与已修改文件\n"
+                "- `/history` : **会话历史** - 查看当前会话已完成轮次的摘要与 Token 统计\n"
+                "- `/undo` : **撤销上一轮** - 回滚上一轮对话并物理还原被修改的源码文件\n"
+                "- `/clear` : **清空会话** - 重置当前对话记录（别名：`/new`、`/reset`）\n"
+                "\n**工作区与画像**\n"
+                "- `/workspace` : **工作区信息** - 查看当前工程根目录、项目归属与活动会话\n"
+                "- `/projects` : **项目地图** - 查看全局已登记的工程工作区索引清单\n"
+                "- `/sessions` : **会话列表** - 浏览当前项目下的全部历史与激活会话\n"
+                "- `/profile` : **开发画像** - 查看用户全局共享记忆、编码规范与偏好\n"
+                "- `/remember` : **记入偏好** - 永久记入一条跨项目生效的编码习惯（用法：`/remember <规范>`）\n"
+                "- `/forget` : **移除偏好** - 从全局记忆中移除匹配的规则（用法：`/forget <关键字>`）\n"
+                "\n**帮助**\n"
+                "- `/help` : **指令手册** - 显示本快捷指令清单\n"
                 "\n直接输入指令即可快速执行，亦可在指令后追加具体文件路径或说明！"
             )
             wrapped_callback({
@@ -416,7 +440,7 @@ class AgentBridge:
             })
             return help_text
 
-        elif cmd_lower == "/status":
+        elif cmd_lower in ("/status", "/memory"):
             st = self.get_status()
             status_text = (
                 "### 📊 super 智能体当前运行状态\n\n"
@@ -429,6 +453,15 @@ class AgentBridge:
                 f"- **加载工具数**: `{st.get('tools_count')} 个`\n"
                 f"- **MCP 客户端数**: `{st.get('mcp_clients_count')} 个`\n"
             )
+            if cmd_lower == "/memory":
+                wm = getattr(cur_agent.context_manager, "working_memory", None)
+                goal = (getattr(wm, "current_goal", "") or "（未指定）") if wm else "（未指定）"
+                modified = (getattr(wm, "modified_files", []) or []) if wm else []
+                status_text += f"- **当前目标**: `{goal}`\n"
+                status_text += f"- **已修改文件**: {len(modified)} 个"
+                if modified:
+                    status_text += "（" + ", ".join(str(x) for x in modified[:5]) + "）"
+                status_text += "\n"
             wrapped_callback({
                 "event": "assistant_response",
                 "content": status_text,
@@ -450,6 +483,259 @@ class AgentBridge:
                 "content": resp,
                 "timestamp": time.time()
             })
+            return resp
+
+        elif cmd_lower == "/skills":
+            try:
+                from skills import default_skill_manager
+                skills = default_skill_manager.list_skills()
+                if skills:
+                    lines = [f"### 🧩 已挂载技能库（共 {len(skills)} 个）", ""]
+                    for s in skills:
+                        desc = s.description if len(s.description) <= 180 else s.description[:180] + "…"
+                        lines.append(f"- **{s.name}** · `{s.source_scope}` — {desc}")
+                    lines.append("")
+                    lines.append("> 💡 输入 `/skill <名称>` 查看该技能的完整 SOP 执行规约。")
+                    resp = "\n".join(lines)
+                else:
+                    resp = "### 🧩 技能库\n\n当前未检测到已挂载的 Skills，请检查 `skills/` 目录或通过插件市场安装。"
+            except Exception as err:
+                resp = f"⚠️ 读取技能库失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/skill" or cmd_lower.startswith("/skill "):
+            parts = raw_cmd.split(None, 1)
+            target = parts[1].strip() if len(parts) > 1 else ""
+            try:
+                from skills import default_skill_manager
+                if not target:
+                    rows = [
+                        f"- **{s.name}** · `{s.source_scope}` — "
+                        + (s.description if len(s.description) <= 180 else s.description[:180] + "…")
+                        for s in default_skill_manager.list_skills()
+                    ]
+                    resp = "### 🧩 可用技能\n\n" + ("\n".join(rows) if rows else "（暂无已挂载技能）")
+                    resp += "\n\n> 用法：`/skill <名称>`"
+                else:
+                    skill = default_skill_manager.get_skill(target)
+                    if not skill:
+                        resp = f"⚠️ 未找到技能 `{target}`，输入 `/skills` 查看全部可用技能。"
+                    else:
+                        body = skill.content or skill.description
+                        if len(body) > 6000:
+                            body = body[:6000] + "\n\n> …（内容过长，已截断）"
+                        resp = f"### 🧩 技能：{skill.name}\n\n**来源**：`{skill.source_scope}`\n\n{body}"
+            except Exception as err:
+                resp = f"⚠️ 读取技能详情失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/mcp":
+            try:
+                mgr = getattr(cur_agent, "mcp_manager", None)
+                clients = getattr(mgr, "clients", {}) or {}
+                executor = getattr(cur_agent, "executor", None)
+                registry = getattr(executor, "registry", None)
+                all_tools = registry.get_tool_names() if registry and hasattr(registry, "get_tool_names") else []
+                mcp_tools = [t for t in all_tools if t.startswith("mcp__")]
+                loaded_paths = getattr(mgr, "loaded_config_paths", []) or []
+                lines = ["### 🔌 MCP 扩展服务状态", ""]
+                if loaded_paths:
+                    lines.append("**生效配置文件**：" + "、".join(f"`{p}`" for p in loaded_paths))
+                else:
+                    cfg = getattr(mgr, "config_path", None)
+                    lines.append(f"**生效配置文件**：`{cfg}`" if cfg else "**生效配置文件**：（未发现）")
+                lines.append("")
+                lines.append(f"**已连通服务**：{len(clients)} 个")
+                for sid, _client in clients.items():
+                    s_tools = [t for t in mcp_tools if t.startswith(f"mcp__{sid}__")]
+                    suffix = ("：" + ", ".join(f"`{t}`" for t in s_tools)) if s_tools else ""
+                    lines.append(f"- `{sid}` · 提供 {len(s_tools)} 个工具{suffix}")
+                if not clients:
+                    lines.append("- （当前未连通任何外部 MCP 服务）")
+                candidates = list(mgr.get_candidate_config_paths()) if mgr and hasattr(mgr, "get_candidate_config_paths") else []
+                if candidates:
+                    lines.append("")
+                    lines.append("**级联配置探测顺序**：")
+                    for idx, cp in enumerate(candidates, 1):
+                        exists = "✅ 已载入" if getattr(cp, "exists", lambda: False)() else "— 未配置"
+                        lines.append(f"{idx}. `{cp}` {exists}")
+                resp = "\n".join(lines)
+            except Exception as err:
+                resp = f"⚠️ 读取 MCP 状态失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/workspace":
+            try:
+                from tools.framework.workspace import default_workspace
+                resp = (
+                    "### 📁 工作区信息\n\n"
+                    f"- **当前项目**：`{cur_proj}`\n"
+                    f"- **工程根目录**：`{target_ws_dir}`\n"
+                    f"- **全局工作区**：`{default_workspace.root}`\n"
+                    f"- **当前会话**：`{active_sid}`\n"
+                    f"- **累计轮次**：{getattr(cur_agent.context_manager, 'turn_count', 0)} 轮"
+                )
+            except Exception as err:
+                resp = f"⚠️ 读取工作区信息失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/profile":
+            try:
+                from context.global_memory import default_global_memory
+                resp = "### 👤 全局开发画像\n\n```text\n" + default_global_memory.format_profile_view().strip() + "\n```"
+            except Exception as err:
+                resp = f"⚠️ 读取全局画像失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower.startswith("/remember"):
+            parts = raw_cmd.split(None, 1)
+            habit = parts[1].strip() if len(parts) > 1 else ""
+            if not habit:
+                resp = "用法：`/remember <偏好或编码规范>`\n\n例如：`/remember 优先使用 TypeScript 并保持严格类型`"
+            else:
+                try:
+                    from context.global_memory import default_global_memory
+                    added = default_global_memory.add_habit(habit)
+                    resp = (
+                        f"✅ 已将偏好写入全局记忆：\n\n> {habit}\n\n该规范将在所有工程与会话中持续生效。"
+                        if added else "ℹ️ 该偏好此前已登记，无需重复添加。"
+                    )
+                except Exception as err:
+                    resp = f"⚠️ 写入全局记忆失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower.startswith("/forget"):
+            parts = raw_cmd.split(None, 1)
+            keyword = parts[1].strip() if len(parts) > 1 else ""
+            if not keyword:
+                resp = "用法：`/forget <关键字>`，输入 `/profile` 查看当前已登记的偏好。"
+            else:
+                try:
+                    from context.global_memory import default_global_memory
+                    removed = default_global_memory.remove_habit(keyword)
+                    if removed:
+                        resp = "✅ 已从全局记忆中移除：\n\n" + "\n".join(f"- {r}" for r in removed)
+                    else:
+                        resp = f"ℹ️ 未找到包含 `{keyword}` 的全局偏好。"
+                except Exception as err:
+                    resp = f"⚠️ 移除全局记忆失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/history":
+            try:
+                cm = cur_agent.context_manager
+                turns = getattr(cm, "completed_turns", []) or []
+                lines = [f"### 🗂️ 会话历史简报（{len(turns)} 轮）", ""]
+                if not turns:
+                    lines.append("（当前会话暂无已完成的轮次）")
+                for chunk in turns[-12:]:
+                    user_text = ""
+                    messages = getattr(chunk, "messages", None) or []
+                    if messages:
+                        user_text = str(messages[0].get("content", ""))
+                    user_text = " ".join(user_text.split())
+                    if len(user_text) > 80:
+                        user_text = user_text[:80] + "…"
+                    token_count = 0
+                    if hasattr(chunk, "estimate_tokens"):
+                        try:
+                            token_count = chunk.estimate_tokens(cm.token_counter)
+                        except Exception:
+                            token_count = 0
+                    lines.append(f"- **轮次 #{chunk.turn_id}** · {len(messages)} 条消息 · ~{token_count} tokens")
+                    lines.append(f"  > {user_text or '（无用户文本）'}")
+                if len(turns) > 12:
+                    lines.append(f"\n> 仅显示最近 12 轮，共 {len(turns)} 轮。")
+                resp = "\n".join(lines)
+            except Exception as err:
+                resp = f"⚠️ 读取会话历史失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/undo":
+            try:
+                cm = cur_agent.context_manager
+                if getattr(cm, "current_turn", None) is not None:
+                    resp = "⚠️ 当前轮次仍在执行中，请等待本轮完成后再撤销。"
+                else:
+                    if not getattr(cm, "completed_turns", None):
+                        cm.restore_from_disk()
+                    if not getattr(cm, "completed_turns", None):
+                        resp = "ℹ️ 当前会话没有可供撤销的已完成轮次。"
+                    else:
+                        rolled = cm.completed_turns[-1]
+                        ok = cm.rollback_last_turn(restore_disk=True)
+                        restored = getattr(cm, "last_rolled_back_files", []) or []
+                        remaining = len(cm.completed_turns)
+                        if ok and remaining == 0:
+                            hist = getattr(cm, "history_file", None)
+                            if not hist or not hist.exists():
+                                hist = HISTORY_ROOT / cur_proj / f"{active_sid}.jsonl"
+                            if hist and hist.exists():
+                                hist.unlink()
+                            if getattr(cm, "snapshot_manager", None):
+                                try:
+                                    cm.snapshot_manager.clear_session_snapshots(active_sid)
+                                except Exception:
+                                    pass
+                        if ok:
+                            lines = [f"### ↩️ 已撤销轮次 #{rolled.turn_id}", "", f"- 剩余轮次：**{remaining}** 轮"]
+                            if restored:
+                                lines.append("- 已还原文件：")
+                                lines.extend(f"  - `{item}`" for item in restored)
+                            else:
+                                lines.append("- 本轮未改动物理磁盘文件。")
+                            if remaining == 0:
+                                lines.append("\n> 该会话已无任何轮次，磁盘历史记录已同步清除。")
+                            resp = "\n".join(lines)
+                        else:
+                            resp = "⚠️ 撤销失败：未能回滚上一轮对话。"
+            except Exception as err:
+                resp = f"⚠️ 撤销失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/projects":
+            try:
+                from context.global_memory import default_global_memory
+                projs = default_global_memory.list_projects()
+                lines = [f"### 🗺️ 已登记工程工作区（{len(projs)} 个）", ""]
+                for proj in projs[:40]:
+                    desc = f" — {proj.get('description')}" if proj.get("description") else ""
+                    lines.append(f"- **{proj['name']}**：`{proj['path']}`{desc}")
+                if not projs:
+                    lines.append("（暂无已登记工程）")
+                elif len(projs) > 40:
+                    lines.append(f"\n> 仅显示前 40 个，共 {len(projs)} 个已登记工程。")
+                resp = "\n".join(lines)
+            except Exception as err:
+                resp = f"⚠️ 读取工程地图失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower in ("/sessions", "/session"):
+            try:
+                lister = getattr(cur_agent, "list_sessions", None)
+                if not callable(lister):
+                    lister = getattr(getattr(cur_agent, "session_manager", None), "list_sessions", None)
+                sessions = lister() if callable(lister) else []
+                lines = [f"### 💬 当前项目会话（`{cur_proj}`，共 {len(sessions)} 个）", ""]
+                for s in sessions:
+                    mark = " ← **当前**" if s.get("is_active") else ""
+                    lines.append(f"- **{s.get('session_id')}** · {s.get('turn_count', 0)} 轮{mark}")
+                if not sessions:
+                    lines.append("（暂无会话）")
+                resp = "\n".join(lines)
+            except Exception as err:
+                resp = f"⚠️ 读取会话列表失败：{err}"
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
         # 智能宏命令映射增强
@@ -653,7 +939,12 @@ class AgentBridge:
                 err_str = str(run_err)
                 target_model_name = getattr(cur_agent, 'model', model)
                 actual_base_url = getattr(cur_agent, 'base_url', '') or '默认地址'
-                if "404" in err_str or "notfound" in err_str.lower() or "not found" in err_str.lower():
+
+                is_auth_error = any(k in err_str.lower() for k in ["401", "unauthorized", "invalid_api_key", "api key", "密钥", "未配置模型"])
+                is_404_error = any(k in err_str.lower() for k in ["404", "notfound", "not found", "model not found"])
+                steps_done = getattr(streaming_executor, "tool_steps_count", 0)
+
+                if is_404_error:
                     err_text = (
                         f"❌ 模型调用失败: 404 Not Found (接口路径或模型未找到)\n\n"
                         f"🔍 当前请求参数:\n"
@@ -664,8 +955,62 @@ class AgentBridge:
                         f"2. **Base URL 端点多余或错误**: 接口地址只需填写到域名或版本前缀（例如 `https://api.deepseek.com/v1`），请勿填写 `/chat/completions` 等完整请求后缀；\n"
                         f"3. 请前往右下角「+ 添加模型」或「系统设置 -> 模型提供方」检查并保存最新配置后重试。"
                     )
+                elif is_auth_error and steps_done == 0:
+                    err_text = f"❌ 模型调用鉴权失败: {str(run_err)}\n\n💡 检查建议: 请前往右下角「+ 添加模型」或「系统设置 -> 模型」检查模型「{target_model_name}」的 API Key、接口地址 (Base URL) 是否正确有效。"
+                elif "502" in err_str or "bad gateway" in err_str.lower():
+                    err_text = (
+                        f"❌ 网关代理异常 (502 Bad Gateway): 上游中转代理服务无法连通目标模型服务器。\n\n"
+                        f"🔍 诊断排查:\n"
+                        f"- 代理工具 (如 Antigravity Tools) 向上游服务商发起请求时网络中断或超时；\n"
+                        f"- 请检查 Antigravity Tools 等中转工具后台日志与梯子/科学上网代理状态；\n"
+                        f"- 或前往右下角切换至其他直连模型提供方 (如 DeepSeek)。"
+                    )
+                elif "503" in err_str or "capacity" in err_str.lower() or "overload" in err_str.lower():
+                    err_text = (
+                        f"⚠️ 模型服务容量已满或不可用 (503 Service Unavailable): 上游服务商报告当前「{target_model_name}」负载过高 (Model Capacity Exhausted)。\n\n"
+                        f"💡 建议: 请稍候 1~2 分钟重试，或在右下角切换为其他可用模型。"
+                    )
+                # 准确区分内部代码异常与外部模型上游网络服务异常，严禁将代码Bug误报为429限流或网络抖动
+                is_internal_error = isinstance(run_err, (
+                    UnboundLocalError, NameError, TypeError, AttributeError,
+                    IndexError, KeyError, AssertionError, SyntaxError
+                ))
+
+                if is_internal_error:
+                    err_text = (
+                        f"❌ 智能体系统内部执行异常 ({type(run_err).__name__}): {str(run_err)}\n\n"
+                        f"🔍 真实原因诊断: 经系统检测，该问题为内部代码逻辑运行异常，**绝非**大模型服务商网络断连或限流问题。\n"
+                        f"{f'💡 状态保留: 前序已成功执行的 {steps_done} 步排查与文件改动已完整保存在上下文中。' if steps_done > 0 else ''}\n"
+                        f"您可以点击本轮对话下方的「撤销」按钮回滚本轮所有改动，或重新发起任务。"
+                    )
+                elif any(k in err_str.lower() for k in ["429", "rate limit", "too many requests"]):
+                    err_text = (
+                        f"⚠️ 模型服务商限流 (429 Too Many Requests): 上游调用超出频次或并发限制。\n\n"
+                        f"💡 建议: 请稍候 30~60 秒重试，或前往右下角切换为其他可用模型。"
+                    )
+                elif steps_done > 0 and (isinstance(run_err, (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)) or any(k in err_str.lower() for k in ["connection", "timeout", "timed out", "reset by peer", "failed to connect"])):
+                    err_text = (
+                        f"⚠️ 智能体在第 {steps_done} 步执行中遭遇上游网络中断: {str(run_err)}\n\n"
+                        f"💡 状态说明: 前序排查与文件修改已妥善保留，此问题通常由模型服务商瞬时网络抖动或超时引起，非配置失效。\n"
+                        f"您可以直接点击「重新生成」或输入「继续」推进下一步任务。"
+                    )
+                elif steps_done > 0:
+                    err_text = (
+                        f"⚠️ 智能体在第 {steps_done} 步执行中遭遇异常: {str(run_err)}\n\n"
+                        f"💡 状态说明: 前序已执行的 {steps_done} 步排查与文件改动已妥善保留。\n"
+                        f"您可以点击本轮用户消息旁的「撤销」按钮撤销改动，或重新发起任务。"
+                    )
                 else:
-                    err_text = f"❌ 模型调用失败: {str(run_err)}\n\n💡 检查建议: 请前往右下角「+ 添加模型」或「系统设置 -> 模型」检查模型「{target_model_name}」的 API Key、接口地址 (Base URL) 是否正确有效。"
+                    err_text = f"❌ 模型通信异常: {str(run_err)}\n\n💡 提示: 上游网络连接或模型服务响应超时，请检查网络通畅度或稍后重试。"
+
+                # 确保磁盘历史安全闭环，绝对不留悬挂未闭合的孤儿 turn
+                try:
+                    if cur_agent and hasattr(cur_agent, "context_manager") and cur_agent.context_manager:
+                        cur_agent.context_manager.add_assistant_message(err_text)
+                        cur_agent.context_manager.finish_current_turn(elapsed=elapsed_total)
+                except Exception:
+                    pass
+
                 wrapped_callback({
                     "event": "assistant_response",
                     "content": err_text,
@@ -673,7 +1018,7 @@ class AgentBridge:
                     "timestamp": time.time(),
                     "is_error": True
                 })
-                raise run_err
+                return err_text
 
             # 计算最终遥测指标并推送 (真实动态遥测：统计真实耗时、工具调用与每秒吐字速率)
             elapsed_total = max(0.1, time.time() - start_time)

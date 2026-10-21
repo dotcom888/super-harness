@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Zap
 } from "lucide-react";
+import { useModalTransition } from "../utils/useModalTransition";
 
 interface PluginsModalProps {
   isOpen: boolean;
@@ -50,7 +51,8 @@ export const PluginsModal: React.FC<PluginsModalProps> = ({ isOpen, onClose }) =
       .catch(() => {});
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  const { mounted, visible } = useModalTransition(isOpen, 300);
+  if (!mounted) return null;
 
   const builtinSkills = skills.filter((s) => s.source_scope === "builtin");
   const userSkills = skills.filter((s) => s.source_scope === "user" || s.source_scope === "codex");
@@ -70,9 +72,9 @@ export const PluginsModal: React.FC<PluginsModalProps> = ({ isOpen, onClose }) =
       ];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 select-none">
+    <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} className={`fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 select-none transition-opacity duration-300 ease-out ${visible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
       <div 
-        className="w-[700px] h-[580px] bg-white dark:bg-[#12141c] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#222634] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150 transition-colors"
+        className={`w-[700px] h-[580px] bg-white dark:bg-[#12141c] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#222634] overflow-hidden flex flex-col transition-all duration-300 ease-out ${visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-2"}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 顶部标题栏 */}

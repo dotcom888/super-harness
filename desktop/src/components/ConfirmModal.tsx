@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { AlertTriangle, Trash2, X } from "lucide-react";
+import { useModalTransition } from "../utils/useModalTransition";
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -35,12 +36,13 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onCancel, onConfirm]);
 
-  if (!isOpen) return null;
+  const { mounted, visible } = useModalTransition(isOpen, 250);
+  if (!mounted) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs select-none animate-in fade-in duration-150">
+    <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} className={`fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs select-none transition-opacity duration-250 ease-out ${visible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
       <div 
-        className="w-full max-w-sm bg-white dark:bg-[#161822] rounded-2xl shadow-2xl border border-gray-200/90 dark:border-[#282c3c] overflow-hidden p-5 transition-all animate-in zoom-in-95 duration-150"
+        className={`w-full max-w-sm bg-white dark:bg-[#161822] rounded-2xl shadow-2xl border border-gray-200/90 dark:border-[#282c3c] overflow-hidden p-5 transition-all duration-250 ease-out ${visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-2"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-3.5">

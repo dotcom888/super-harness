@@ -24,14 +24,26 @@ import {
   Square,
   Paperclip,
   UploadCloud,
-  Loader2
+  Loader2,
+  Cpu,
+  Undo2,
+  History,
+  UserCheck,
+  FolderTree,
+  RotateCw,
+  BookOpen,
+  Database,
+  Pin,
+  Eraser,
+  FolderKanban,
+  MessagesSquare
 } from "lucide-react";
 import { ProjectInfo, AttachmentItem } from "../types";
 import { PendingAttachmentChip } from "./AttachmentCards";
 import { readMediaFromClipboard, extractFilesFromClipboardEvent, saveDraft, loadDraft, clearDraft } from "../utils/clipboardHelper";
 import { InputContextMenu, ContextMenuPosition } from "./InputContextMenu";
 import { LOGO_DATA_URI } from "../assets/logoData";
-import { EXECUTION_MODES, normalizeModeId, getModeDisplayName, ExecutionModeId } from "../utils/modeHelper";
+import { EXECUTION_MODES, normalizeModeId, getModeDisplayName, ExecutionModeId, getModeVisualConfig } from "../utils/modeHelper";
 
 interface EmptyStateProps {
   projectName: string;
@@ -237,10 +249,88 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       icon: <Minimize2 size={14} className="text-indigo-500" />
     },
     {
+      cmd: "/skills",
+      name: "已挂载技能库",
+      desc: "查看已加载的所有 Skills 专家技能列表与 SOP 规约",
+      icon: <Cpu size={14} className="text-violet-500" />
+    },
+    {
+      cmd: "/skill",
+      name: "查看技能详情",
+      desc: "查看指定技能的完整 SOP 执行规约（用法：/skill 名称）",
+      icon: <BookOpen size={14} className="text-rose-500" />
+    },
+    {
+      cmd: "/mcp",
+      name: "MCP 服务感知",
+      desc: "探测 MCP 扩展服务状态与级联配置文件路径",
+      icon: <Zap size={14} className="text-yellow-500" />
+    },
+    {
+      cmd: "/status",
+      name: "查看系统状态",
+      desc: "查看当前工作区路径、大模型配置与 MCP 工具状态",
+      icon: <RotateCw size={14} className="text-emerald-500" />
+    },
+    {
+      cmd: "/memory",
+      name: "查看工作记忆",
+      desc: "查看当前工作区感知、当前目标与已修改文件",
+      icon: <Database size={14} className="text-cyan-600" />
+    },
+    {
+      cmd: "/history",
+      name: "会话历史简报",
+      desc: "快速梳理当前会话的历史摘要与关键文件变更",
+      icon: <History size={14} className="text-sky-500" />
+    },
+    {
+      cmd: "/undo",
+      name: "撤销上一轮对话",
+      desc: "回滚上一轮对话并物理还原被修改的源码文件",
+      icon: <Undo2 size={14} className="text-orange-500" />
+    },
+    {
       cmd: "/clear",
       name: "清空重置会话",
       desc: "重置当前对话记录，开启全新独立交互轮次",
       icon: <Trash2 size={14} className="text-gray-500" />
+    },
+    {
+      cmd: "/workspace",
+      name: "工作区路径信息",
+      desc: "查看当前绑定工程的绝对路径与工作目录索引",
+      icon: <FolderTree size={14} className="text-teal-500" />
+    },
+    {
+      cmd: "/projects",
+      name: "项目工作区地图",
+      desc: "查看全局已登记的工程工作区索引与路径清单",
+      icon: <FolderKanban size={14} className="text-emerald-600" />
+    },
+    {
+      cmd: "/sessions",
+      name: "会话列表",
+      desc: "浏览当前项目下的全部历史与激活会话",
+      icon: <MessagesSquare size={14} className="text-indigo-500" />
+    },
+    {
+      cmd: "/profile",
+      name: "全局开发画像",
+      desc: "查看系统全局共享记忆与用户开发偏好画像",
+      icon: <UserCheck size={14} className="text-pink-500" />
+    },
+    {
+      cmd: "/remember",
+      name: "记入全局偏好",
+      desc: "永久记入一条跨项目生效的编码习惯与偏好",
+      icon: <Pin size={14} className="text-fuchsia-500" />
+    },
+    {
+      cmd: "/forget",
+      name: "移除全局偏好",
+      desc: "从全局记忆中移除匹配的编码规则或偏好",
+      icon: <Eraser size={14} className="text-slate-500" />
     },
     {
       cmd: "/help",
@@ -368,15 +458,16 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   };
 
   const currentModeId = normalizeModeId(permission);
+  const modeVisual = getModeVisualConfig(permission);
 
   const renderModeIcon = (modeId: ExecutionModeId) => {
     switch (modeId) {
       case "plan":
         return <Compass size={13} className="text-amber-500" />;
       case "edit_auto":
-        return <FileEdit size={13} className="text-purple-500" />;
+        return <FileEdit size={13} className="text-emerald-500" />;
       case "manual":
-        return <ShieldCheck size={13} className="text-emerald-500" />;
+        return <ShieldCheck size={13} className="text-purple-500" />;
       default:
         return <Zap size={13} className="text-blue-500" />;
     }
@@ -401,7 +492,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <div className="flex-1 h-full flex flex-col items-center justify-center px-4 bg-white dark:bg-[#0f1117] select-none transition-colors duration-150">
-      <div className="w-full max-w-2xl flex flex-col items-center -mt-16">
+      <div className="w-full max-w-[57.6rem] mx-auto flex flex-col items-center -mt-16">
         {/* super 品牌标识与标题（提取出的透明图形 Logo） */}
         <div className="flex items-center gap-3 mb-7">
           <img 
@@ -533,18 +624,21 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
           onSelectAll={handleMenuSelectAll}
         />
 
-        {/* 悬浮圆角输入框卡片 (支持拖拽上传) */}
-        <div 
-          onDragEnter={handleDragEnter}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onPaste={handlePaste}
-          onContextMenu={handleContextMenu}
-          className={`w-full bg-white dark:bg-[#161822] border ${
-            isDragging ? "border-blue-500 ring-2 ring-blue-500/20" : "border-gray-200 dark:border-[#262a38]"
-          } shadow-sm hover:shadow-md focus-within:shadow-md focus-within:border-gray-300 dark:focus-within:border-gray-600 rounded-2xl p-3.5 transition relative`}
+        {/* 悬浮圆角输入框卡片 (支持拖拽上传；悬浮状态与 4 种模式渐变色彩) */}
+        <div
+          className={`w-full p-px rounded-[18px] bg-gradient-to-br ${modeVisual.gradientBorder} ${modeVisual.floatingShadow} ${modeVisual.focusGlow} opacity-65 hover:opacity-85 focus-within:opacity-100 transition-all duration-300 ease-out`}
         >
+          <div 
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onPaste={handlePaste}
+            onContextMenu={handleContextMenu}
+            className={`w-full bg-white dark:bg-[#161822] rounded-[17px] p-3.5 transition-colors relative ${
+              isDragging ? "ring-2 ring-blue-500/30" : ""
+            }`}
+          >
           {/* 拖拽感应悬浮蒙层 */}
           {isDragging && (
             <div className="absolute inset-0 bg-blue-50/95 dark:bg-[#161a29]/95 border-2 border-dashed border-blue-500 rounded-2xl flex items-center justify-center gap-2.5 z-40 text-blue-600 dark:text-blue-400 font-medium text-xs backdrop-blur-2xs pointer-events-none select-none">
@@ -615,12 +709,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                       className="fixed inset-0 z-20 cursor-default" 
                       onClick={() => setShowCommandMenu(false)} 
                     />
-                    <div className="absolute left-0 bottom-9 w-72 bg-white dark:bg-[#1e202a] border border-gray-200 dark:border-gray-700 shadow-2xl rounded-2xl py-2 z-30 text-xs animate-in fade-in zoom-in-95 duration-100">
+                    <div className="absolute left-0 bottom-9 w-80 bg-white dark:bg-[#1e202a] border border-gray-200 dark:border-gray-700 shadow-2xl rounded-2xl py-2 z-30 text-xs animate-in fade-in zoom-in-95 duration-100">
                       <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 flex items-center justify-between">
                         <span>常用快捷指令</span>
-                        <span className="text-[10px] text-gray-400 font-mono">点击直接填入</span>
+                        <span className="text-[10px] text-gray-400 font-mono">共 21 个 · 可滚动</span>
                       </div>
-                      <div className="max-h-64 overflow-y-auto py-1">
+                      <div className="max-h-[min(430px,55vh)] overflow-y-auto py-1">
                         {shortcutCommands.map((item) => (
                           <div
                             key={item.cmd}
@@ -831,6 +925,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                 </button>
               )}
             </div>
+          </div>
           </div>
         </div>
       </div>

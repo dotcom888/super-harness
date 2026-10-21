@@ -11,7 +11,7 @@ import logging
 from typing import List, Dict, Any, Optional, Union, Callable
 from pathlib import Path
 from dotenv import load_dotenv
-from openai import OpenAI, APIConnectionError
+from openai import OpenAI, APIConnectionError, APITimeoutError, RateLimitError, InternalServerError, APIError
 from core.client_utils import create_resilient_openai_client
 from openai.types.chat import ChatCompletionMessage
 
@@ -443,15 +443,19 @@ class ReActAgent:
                             f"【系统保护】轮内多步推理消耗已达上下文上限 ({current_context_tokens}/{self.context_manager.budget.total_budget} Tokens)，"
                             f"为避免触发大模型长度超限异常 (400 context_length_exceeded)，已安全熔断并终止后续工具调用。"
                         )
-                    logger.warning(
-                        f"轮内多步推理触发动态预算熔断: Step {step} 上下文 Tokens ({current_context_tokens}) > 允许上限 ({max_context_allowed})。"
-                    )
-                    if verbose:
-                        print(f"\n[动态熔断] {circuit_msg}")
-                    self.context_manager.add_assistant_message(circuit_msg)
-                    self.context_manager.finish_current_turn()
-                    turn_finished = True
-                    return circuit_msg
+                        logger.warning(
+                            f"轮内多步推理触发动态预算熔断: Step {step} 上下文 Tokens ({current_context_tokens}) > 允许上限 ({max_context_allowed})。"
+                        )
+                        if verbose:
+                            print(f"\n[动态熔断] {circuit_msg}")
+                        self.context_manager.add_assistant_message(circuit_msg)
+                        self.context_manager.finish_current_turn()
+                        turn_finished = True
+                        return circuit_msg
+                    else:
+                        logger.info(
+                            f"轮内多步推理上下文安全受控: Step {step} 经过扩容/观察结果裁剪后，当前 Tokens 为 {current_context_tokens} <= 允许上限 {max_context_allowed}，继续执行。"
+                        )
 
                 # 2. 状态判定与工具闭合控制 (Graceful Wrap-up):
                 # 若到达最终步或死循环红牌强制收尾，关闭工具接口，迫使模型汇总事实输出最终解答
@@ -480,30 +484,79 @@ class ReActAgent:
                 # User 消息在 Step 1 注入初始 Banner 后终身只读，绝不回溯改写任何历史 User / Tool 消息。
                 # 下一步的进度倒计时与阶段引导将在工具执行完毕后，单调追加至最新 Tool Result 尾部。
 
-                try:
-                    response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        tools=call_tools,
-                        tool_choice=call_tool_choice,
-                        max_tokens=output_reserve
-                    )
-                except Exception as e_call:
-                    if isinstance(e_call, APIConnectionError):
-                        logger.warning(f"LLM connection error encountered ({e_call}), retrying with direct connection...")
-                        try:
-                            self.client = create_resilient_openai_client(api_key=self.api_key, base_url=self.base_url, force_direct=True)
-                            response = self.client.chat.completions.create(
-                                model=self.model,
-                                messages=messages,
-                                tools=call_tools,
-                                tool_choice=call_tool_choice,
-                                max_tokens=output_reserve
-                            )
-                        except Exception:
-                            raise e_call
+                # 生产级稳健重试：对瞬时网络连接、超时、429限流与5xx服务端波动进行指数退避重试 (最多重试3次)
+                response = None
+                max_retries = 3
+                last_call_err = None
+
+                for attempt in range(max_retries):
+                    if getattr(self, "abort_requested", False):
+                        break
+                    try:
+                        response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            tools=call_tools,
+                            tool_choice=call_tool_choice,
+                            max_tokens=output_reserve
+                        )
+                        break
+                    except (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError) as e_retry:
+                        last_call_err = e_retry
+                        err_str = str(e_retry).lower()
+                        # 若为模型容量已满 (503 MODEL_CAPACITY_EXHAUSTED) 或致命网关错误 (502)，无需无谓长等重试，直接抛出以便即时诊断
+                        if "capacity" in err_str or "overload" in err_str or "502" in err_str or "bad gateway" in err_str:
+                            logger.warning(f"大模型上游代理故障或容量耗尽: {e_retry}，终止重试以防卡死")
+                            break
+                        wait_sec = min(6.0, 1.5 * (2 ** attempt))
+                        logger.warning(
+                            f"大模型调用遇到瞬时异常 [{type(e_retry).__name__}: {e_retry}]，"
+                            f"第 {attempt + 1}/{max_retries} 次重试，将在 {wait_sec}s 后重试..."
+                        )
+                        if isinstance(e_retry, APIConnectionError) and not isinstance(e_retry, APITimeoutError) and attempt == 0:
+                            try:
+                                self.client = create_resilient_openai_client(
+                                    api_key=self.api_key, 
+                                    base_url=self.base_url, 
+                                    force_direct=True
+                                )
+                            except Exception:
+                                pass
+                        time.sleep(wait_sec)
+                    except Exception as e_non_retry:
+                        last_call_err = e_non_retry
+                        break
+
+                if response is None:
+                    if getattr(self, "abort_requested", False):
+                        self.abort_requested = False
+                        pause_msg = "【用户已手动暂停】已终止当前思考与工具调用。"
+                        self.context_manager.add_assistant_message(pause_msg)
+                        self.context_manager.finish_current_turn()
+                        turn_finished = True
+                        return pause_msg
+
+                    wm = self.context_manager.working_memory
+                    has_completed_work = bool(wm.inspected_files or wm.modified_files or step > 1)
+                    if has_completed_work:
+                        graceful_msg = f"⚠️ 大模型上游服务响应异常中断（第 {step} 步通信失败: {last_call_err}）。\n\n已安全保全当前任务排查进度与工程成果："
+                        if wm.inspected_files:
+                            graceful_msg += f"\n- **已排查文件**: {', '.join(f'`{f}`' for f in list(wm.inspected_files.keys())[:5])}"
+                        if wm.modified_files:
+                            graceful_msg += f"\n- **已修改文件**: {', '.join(f'`{f}`' for f in wm.modified_files[:5])}"
+                        if wm.last_test_status:
+                            graceful_msg += f"\n- **最新验证状态**: {wm.last_test_status}"
+                        graceful_msg += "\n\n💡 你可以直接输入「继续」或「重试」，智能体将无缝接续上下文推进下一步排查。"
+                        
+                        logger.warning(f"ReActAgent: 优雅捕获上游网络/服务波动，交付阶段性成果汇报: {last_call_err}")
+                        if token_callback:
+                            token_callback(graceful_msg)
+                        self.context_manager.add_assistant_message(graceful_msg)
+                        self.context_manager.finish_current_turn()
+                        turn_finished = True
+                        return graceful_msg
                     else:
-                        raise e_call
+                        raise last_call_err or RuntimeError("大模型调用未能返回有效响应")
 
                 # 捕获大模型权威真实 API Usage 反馈并记录校准
                 usage = getattr(response, "usage", None)
@@ -716,7 +769,10 @@ class ReActAgent:
             return fallback_msg
 
         finally:
-            # 关键修复：中断或异常时安全撤销，绝不调用 finish_current_turn 打上假完成标记
+            # 容灾保证：若异常或中断退出，绝不粗暴销毁已记录的用户提示与执行步骤；
+            # 允许外部调用者（如 agent_bridge）将真实异常闭环写入当前 turn 并完成本轮。
+            # 仅当当前 turn 完全没有任何消息或完全为空时才做 abort 清理。
             if not turn_finished and self.context_manager.current_turn:
-                logger.warning("轮次未正常完成即退出，安全取消当前悬挂轮次。")
-                self.context_manager.abort_current_turn()
+                if not self.context_manager.current_turn.messages:
+                    logger.warning("轮次没有任何有效消息且未正常完成，安全取消空轮次。")
+                    self.context_manager.abort_current_turn()

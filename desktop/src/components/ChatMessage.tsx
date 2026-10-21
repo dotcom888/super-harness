@@ -35,6 +35,7 @@ interface ChatMessageProps {
   onEditPrompt?: (text: string) => void;
   onResendTurn?: (turnId: number, newPrompt: string) => void;
   onOpenSettings?: () => void;
+  onRollbackTurn?: (turnId: number) => void;
   approvalReq?: { ticket_id: string; command: string; reason: string } | null;
   onApproveApproval?: (ticketId: string, trustSession: boolean) => void;
   onRejectApproval?: (ticketId: string) => void;
@@ -479,8 +480,15 @@ const ThinkStepRow: React.FC<{ thought: string; isRunning?: boolean }> = ({
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 py-1 px-1.5 -mx-1.5 rounded-lg hover:bg-gray-100/60 dark:hover:bg-[#20232e]/60 transition cursor-pointer group"
       >
-        <div className="relative flex items-center justify-center shrink-0">
-          <Atom size={13} className={`text-purple-500 dark:text-purple-400 shrink-0 ${isRunning ? "animate-spin-slow" : ""}`} />
+        <div className="relative flex items-center justify-center shrink-0 w-[13px] h-[13px]">
+          <Atom size={13} className={`text-purple-500 dark:text-purple-400 shrink-0 group-hover:hidden ${isRunning ? "animate-spin-slow" : ""}`} />
+          <span className="hidden group-hover:flex items-center justify-center">
+            {expanded ? (
+              <ChevronDown size={13} className="text-gray-500 dark:text-gray-400" />
+            ) : (
+              <ChevronRight size={13} className="text-gray-500 dark:text-gray-400" />
+            )}
+          </span>
         </div>
 
         <span className="font-medium text-gray-500 dark:text-gray-400 shrink-0">
@@ -499,13 +507,6 @@ const ThinkStepRow: React.FC<{ thought: string; isRunning?: boolean }> = ({
           </span>
         )}
 
-        <div className="flex items-center text-gray-400 text-[11px] shrink-0 ml-auto">
-          {expanded ? (
-            <ChevronDown size={12} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300" />
-          ) : (
-            <ChevronRight size={12} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300" />
-          )}
-        </div>
       </div>
 
       {expanded && (
@@ -531,6 +532,7 @@ const ToolStepRow: React.FC<{
 
   const chineseType = translateToolName(step.tool || step.display || "");
   const descText = formatToolDesc(step);
+  const canExpand = Boolean(step.args || step.output);
 
   const elapsedText = step.elapsed !== undefined && step.elapsed > 0
     ? `持续了 ${step.elapsed >= 1 ? Math.round(step.elapsed) : step.elapsed.toFixed(1)} 秒` 
@@ -539,18 +541,29 @@ const ToolStepRow: React.FC<{
   return (
     <div className="py-0.5 text-xs select-none transition-colors">
       <div 
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => { if (canExpand) setExpanded(!expanded); }}
         className="flex items-center gap-2 py-1 px-1.5 -mx-1.5 rounded-lg hover:bg-gray-100/60 dark:hover:bg-[#20232e]/60 transition cursor-pointer group"
       >
-        <div className="relative flex items-center justify-center shrink-0">
-          {isRunning ? (
-            <Loader2 size={13} className="text-blue-500 animate-spin shrink-0" />
-          ) : isInterrupted ? (
-            <PauseCircle size={13} className="text-amber-500 shrink-0" />
-          ) : isError ? (
-            <AlertCircle size={13} className="text-red-500 shrink-0" />
-          ) : (
-            <Terminal size={13} className="text-amber-500 dark:text-amber-400 shrink-0" />
+        <div className="relative flex items-center justify-center shrink-0 w-[13px] h-[13px]">
+          <span className={`flex items-center justify-center ${canExpand ? "group-hover:hidden" : ""}`}>
+            {isRunning ? (
+              <Loader2 size={13} className="text-blue-500 animate-spin shrink-0" />
+            ) : isInterrupted ? (
+              <PauseCircle size={13} className="text-amber-500 shrink-0" />
+            ) : isError ? (
+              <AlertCircle size={13} className="text-red-500 shrink-0" />
+            ) : (
+              <Terminal size={13} className="text-amber-500 dark:text-amber-400 shrink-0" />
+            )}
+          </span>
+          {canExpand && (
+            <span className="hidden group-hover:flex items-center justify-center">
+              {expanded ? (
+                <ChevronDown size={13} className="text-gray-500 dark:text-gray-400" />
+              ) : (
+                <ChevronRight size={13} className="text-gray-500 dark:text-gray-400" />
+              )}
+            </span>
           )}
         </div>
 
@@ -584,15 +597,6 @@ const ToolStepRow: React.FC<{
           </span>
         )}
 
-        <div className="flex items-center text-gray-400 text-[11px] shrink-0 ml-auto">
-          {(step.args || step.output) && (
-            expanded ? (
-              <ChevronDown size={12} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300" />
-            ) : (
-              <ChevronRight size={12} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300" />
-            )
-          )}
-        </div>
       </div>
 
       {expanded && (step.args || step.output) && (
@@ -666,9 +670,11 @@ function diagnoseInterruption(steps: TrajectoryStep[]): {
 
   // 3. 通用网络波动或上游服务异常
   return {
-    title: "模型思考中断或服务响应超时",
-    desc: "在执行多步任务时大模型连接断开或未能输出最终回复。可能原因：服务商网络波动、网关超时（504/502）或响应格式中断。",
-    action: "resend"
+    title: steps.length > 0 ? "任务执行中途网络中断或服务超时" : "大模型连接异常或鉴权失败",
+    desc: steps.length > 0
+      ? `智能体已完成 ${steps.length} 个步骤排查。中途由于服务商网络波动或网关超时导致连接中断，已保全当前排查成果。`
+      : "未能成功建立通信。可能原因：当前模型未配置有效 API 密钥、接口 Base URL 无法连通或模型名称不匹配。",
+    action: steps.length > 0 ? "resend" : "settings"
   };
 }
 
@@ -680,6 +686,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   onEditPrompt,
   onResendTurn,
   onOpenSettings,
+  onRollbackTurn,
   approvalReq,
   onApproveApproval,
   onRejectApproval,
@@ -726,6 +733,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
   // 就地原地编辑提问状态 (对标需求 2：点击编辑后直接在气泡处展开编辑并重新发送此轮)
   const [isEditing, setIsEditing] = useState(false);
+
+  // 当智能体进入执行态时，强制关闭编辑态，确保界面干净无竞争 (对标需求 5)
+  useEffect(() => {
+    if (isLoading && isEditing) {
+      setIsEditing(false);
+    }
+  }, [isLoading]);
   const [editText, setEditText] = useState(turn.user_prompt || "");
 
   const handleCopyUser = () => {
@@ -779,7 +793,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const hasSteps = steps.length > 0;
   const userTime = turn.start_timestamp || turn.timestamp;
   const timeStr = userTime ? formatTime(userTime) : (isLoading ? formatTime(Date.now() / 1000) : "");
-  const asstTime = turn.timestamp || turn.start_timestamp;
+  const asstTime = turn.completed_timestamp || turn.timestamp || turn.start_timestamp;
   const fullDateTimeStr = asstTime ? formatFullDateTime(asstTime) : (isLoading ? formatFullDateTime(Date.now() / 1000) : "");
   const elapsedStr = formatTurnElapsed(turn, isLoading ? liveElapsed : turn.elapsed);
 
@@ -802,17 +816,29 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               >
                 {copiedUser ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
               </button>
-              {isLatestTurn && (
-                <button
-                  onClick={() => {
-                    setEditText(turn.user_prompt);
-                    setIsEditing(true);
-                  }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
-                  title="在气泡处编辑并重发"
-                >
-                  <Edit2 size={12} />
-                </button>
+              {/* 仅在非思考执行态且为最后一轮时展示撤销与编辑按钮 (仅最后一轮可见) */}
+              {!isLoading && isLatestTurn && (
+                <>
+                  {onRollbackTurn && (
+                    <button
+                      onClick={() => onRollbackTurn(turn.turn_id)}
+                      className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition cursor-pointer"
+                      title="撤销此轮对话的所有改动"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setEditText(turn.user_prompt);
+                      setIsEditing(true);
+                    }}
+                    className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
+                    title="在气泡处编辑并重发"
+                  >
+                    <Edit2 size={12} />
+                  </button>
+                </>
               )}
             </div>
           )}
@@ -1018,7 +1044,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                       {turn.assistant_response}
                     </div>
                   </div>
+                  {/* 仅在真正属于鉴权/API Key失效或模型配置缺失时才引导前往模型设置，避免执行中网络中断误导用户 */}
                   {onOpenSettings && (
+                    turn.assistant_response.includes("API Key") || 
+                    turn.assistant_response.includes("API 密钥") || 
+                    turn.assistant_response.includes("鉴权失败") || 
+                    turn.assistant_response.includes("401") || 
+                    turn.assistant_response.includes("未配置模型") || 
+                    turn.assistant_response.includes("模型提供方")
+                  ) && (
                     <div className="pt-1 flex justify-end">
                       <button
                         type="button"

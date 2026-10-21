@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { Folder, FolderPlus, X, Check, HardDrive, RefreshCw } from "lucide-react";
+import { useModalTransition } from "../utils/useModalTransition";
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -34,7 +35,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     onClose();
   };
 
-  if (!isOpen) return null;
+  const { mounted, visible } = useModalTransition(isOpen, 300);
+  if (!mounted) return null;
 
   // 调起系统原生文件夹选择器
   const handleSelectFolder = async () => {
@@ -96,8 +98,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const canSubmit = Boolean(projectName.trim() && selectedPath.trim()) && !isSubmitting;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 select-none">
-      <div className="w-[520px] bg-white dark:bg-[#181a24] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#2a2e3f] overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col">
+    <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties} className={`fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 select-none transition-opacity duration-300 ease-out ${visible ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+      <div className={`w-[520px] bg-white dark:bg-[#181a24] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#2a2e3f] overflow-hidden flex flex-col transition-all duration-300 ease-out ${visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-2"}`} onClick={(e) => e.stopPropagation()}>
         {/* 1. 顶部标题栏 */}
         <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 dark:border-[#252837]">
           <div className="flex items-center gap-2">

@@ -53,6 +53,7 @@ export interface TurnData {
   steps?: TrajectoryStep[];
   timestamp?: number;
   start_timestamp?: number;
+  completed_timestamp?: number;
   elapsed?: number;
   is_paused?: boolean;
   permission_mode?: string;
@@ -72,6 +73,7 @@ export interface SessionInfo {
   turn_count: number;
   modified_files_count?: number;
   current_goal?: string;
+  title?: string;
   has_disk_file?: boolean;
   time_ago?: string;
   is_pinned?: boolean;

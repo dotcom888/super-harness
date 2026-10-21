@@ -18,8 +18,7 @@ import {
   X,
   FolderOpen,
   Edit3,
-  MessageSquare,
-  ArrowRightLeft
+  MessageSquare
 } from "lucide-react";
 import { SessionInfo, ProjectInfo } from "../types";
 import { LOGO_DATA_URI } from "../assets/logoData";
@@ -45,8 +44,47 @@ interface SidebarProps {
   onRenameSession?: (project: string, sid: string, newTitle: string) => void;
   onPinSession?: (project: string, sid: string, pinned: boolean) => void;
   onDeleteSession?: (project: string, sid: string) => void;
-  onMoveSessionToProject?: (sid: string, fromProj: string, toProj: string) => void;
+  onMoveSessionToProject?: (sid: string, fromProj: string, toProj: string, targetOrder?: string[]) => void;
+  onReorderProjects?: (newOrder: string[]) => void;
+  onReorderSessions?: (project: string, newOrder: string[]) => void;
 }
+
+// 拖拽源与放置目标状态类型
+interface DragSource {
+  type: "project" | "session";
+  id: string; // project name 或 session_id
+  project?: string; // 所属项目 (或 "_general")
+  title: string;
+}
+
+interface DropTargetState {
+  type: "project" | "session" | "folder";
+  targetProject?: string; // 目标项目名或 "_general"
+  targetSid?: string; // 目标会话ID
+  position?: "before" | "after"; // 蓝线指示放置位置 (对标图二)
+}
+
+// 放置位置指示线组件 (对标图二：蓝色实线并在左边缘带有右向箭头尖角)
+const DropIndicator: React.FC<{ position: "top" | "bottom" }> = ({ position }) => (
+  <div 
+    className={`absolute left-0 right-0 ${
+      position === "top" ? "-top-[1px]" : "-bottom-[1px]"
+    } z-40 pointer-events-none flex items-center`}
+  >
+    <svg 
+      className="w-2.5 h-3.5 -ml-1 text-blue-600 dark:text-blue-500 shrink-0" 
+      viewBox="0 0 10 14" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth="2.5" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    >
+      <polyline points="1,2 8,7 1,12" />
+    </svg>
+    <div className="flex-1 h-[2px] bg-blue-600 dark:bg-blue-500 shadow-xs" />
+  </div>
+);
 
 export const Sidebar: React.FC<SidebarProps> = ({
   collapsed,
@@ -69,11 +107,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRenameSession,
   onPinSession,
   onDeleteSession,
-  onMoveSessionToProject
+  onMoveSessionToProject,
+  onReorderProjects,
+  onReorderSessions
 }) => {
-  const [isProjectsExpanded, setIsProjectsExpanded] = useState<boolean>(true);
-  const [isRecentExpanded, setIsRecentExpanded] = useState<boolean>(true);
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [isProjectsExpanded, setIsProjectsExpanded] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("super_projects_expanded");
+      if (saved !== null) return JSON.parse(saved);
+    } catch (e) {}
+    return true;
+  });
+
+  const [isRecentExpanded, setIsRecentExpanded] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("super_recent_expanded");
+      if (saved !== null) return JSON.parse(saved);
+    } catch (e) {}
+    return true;
+  });
+
+  // 工作区展开/收起状态持久化 (解决需求 1：切换会话时不再自动收起任何工作区)
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("super_expanded_projects");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {};
+  });
+
   const [expandedMoreProjects, setExpandedMoreProjects] = useState<Record<string, boolean>>({});
 
   // 操作菜单弹出层状态
@@ -86,11 +148,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 重命名会话弹窗
   const [renamingSession, setRenamingSession] = useState<{ project: string; sid: string; title: string } | null>(null);
 
+  // 鼠标拖拽排序与移动相关状态 (对标需求 2 & 图二)
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragSource, setDragSource] = useState<DragSource | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const dragPendingRef = useRef<{
+    source: DragSource;
+    startX: number;
+    startY: number;
+    startTime: number;
+    timerId: any;
+  } | null>(null);
+
+  const isDraggingRef = useRef(false);
+  const justDroppedRef = useRef(false);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // 当当前选中的会话切换时，若其归属于某个工作区，确保该工作区已展开，但绝不影响或收起其它已展开工作区
+  useEffect(() => {
+    if (projectName && projectName !== "_general") {
+      setExpandedProjects((prev) => {
+        if (prev[projectName] === true) return prev;
+        const next = { ...prev, [projectName]: true };
+        try {
+          localStorage.setItem("super_expanded_projects", JSON.stringify(next));
+        } catch (e) {}
+        return next;
+      });
+    }
+  }, [projectName]);
+
   const toggleProject = (name: string) => {
-    setExpandedProjects((prev) => ({
-      ...prev,
-      [name]: !(prev[name] ?? (name === projectName))
-    }));
+    setExpandedProjects((prev) => {
+      const currentVal = prev[name] ?? true;
+      const nextVal = !currentVal;
+      const next = { ...prev, [name]: nextVal };
+      try {
+        localStorage.setItem("super_expanded_projects", JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  const handleToggleProjectsHeader = () => {
+    setIsProjectsExpanded((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("super_projects_expanded", JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  const handleToggleRecentHeader = () => {
+    setIsRecentExpanded((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("super_recent_expanded", JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
   };
 
   // 选择磁盘目录
@@ -103,6 +222,258 @@ export const Sidebar: React.FC<SidebarProps> = ({
           setEditingProject({ ...editingProject, path: dir });
         }
       } catch (e) {}
+    }
+  };
+
+  // 鼠标长按或按住移动启动拖拽 (对标需求 2：可以使用鼠标长按住对话框或者工作区改变位置)
+  const handleItemMouseDown = (e: React.MouseEvent, source: DragSource) => {
+    if (e.button !== 0) return; // 仅限左键
+    const target = e.target as HTMLElement;
+    if (target.closest("button") || target.closest("input") || target.closest(".no-drag")) {
+      return;
+    }
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+
+    // 120ms 长按判定定时器
+    const timerId = setTimeout(() => {
+      startDrag(source, startX, startY);
+    }, 120);
+
+    dragPendingRef.current = {
+      source,
+      startX,
+      startY,
+      startTime: Date.now(),
+      timerId
+    };
+  };
+
+  const startDrag = (source: DragSource, x: number, y: number) => {
+    setIsDragging(true);
+    isDraggingRef.current = true;
+    setDragSource(source);
+    setMousePos({ x, y });
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "grabbing";
+  };
+
+  // 全局鼠标移动与释放监听 (处理拖拽指示线与位置计算)
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      // 若鼠标按下并移动超过 4px，立即启动拖拽
+      if (dragPendingRef.current && !isDraggingRef.current) {
+        const dx = e.clientX - dragPendingRef.current.startX;
+        const dy = e.clientY - dragPendingRef.current.startY;
+        if (dx * dx + dy * dy >= 16) {
+          clearTimeout(dragPendingRef.current.timerId);
+          startDrag(dragPendingRef.current.source, e.clientX, e.clientY);
+        }
+      }
+
+      if (!isDraggingRef.current || !dragPendingRef.current) return;
+
+      setMousePos({ x: e.clientX, y: e.clientY });
+
+      // 边缘自动滚动
+      if (scrollContainerRef.current) {
+        const rect = scrollContainerRef.current.getBoundingClientRect();
+        if (e.clientY < rect.top + 35) {
+          scrollContainerRef.current.scrollTop -= 6;
+        } else if (e.clientY > rect.bottom - 35) {
+          scrollContainerRef.current.scrollTop += 6;
+        }
+      }
+
+      // 计算指针所在的目标元素
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      if (!el) {
+        setDropTarget(null);
+        return;
+      }
+
+      const currentSource = dragPendingRef.current.source;
+
+      // 场景 1：拖拽工作区 (仅支持工作区之间相互调整次序)
+      if (currentSource.type === "project") {
+        const projTarget = el.closest("[data-drag-project]") as HTMLElement | null;
+        if (projTarget) {
+          const targetProjName = projTarget.getAttribute("data-drag-project");
+          if (targetProjName && targetProjName !== currentSource.id) {
+            const rect = projTarget.getBoundingClientRect();
+            const isUpper = (e.clientY - rect.top) < (rect.height / 2);
+            setDropTarget({
+              type: "project",
+              targetProject: targetProjName,
+              position: isUpper ? "before" : "after"
+            });
+            return;
+          }
+        }
+        setDropTarget(null);
+        return;
+      }
+
+      // 场景 2：拖拽会话 (支持工作区内会话重排、跨工作区移动、移入未分组、或从未分组移入工作区)
+      if (currentSource.type === "session") {
+        // A. 悬停在某个具体会话上 (展示蓝线指示线)
+        const sessTarget = el.closest("[data-drag-session]") as HTMLElement | null;
+        if (sessTarget) {
+          const targetSid = sessTarget.getAttribute("data-drag-session");
+          const targetProj = sessTarget.getAttribute("data-drag-session-project") || "_general";
+          if (targetSid && (targetSid !== currentSource.id || targetProj !== (currentSource.project || "_general"))) {
+            const rect = sessTarget.getBoundingClientRect();
+            const isUpper = (e.clientY - rect.top) < (rect.height / 2);
+            setDropTarget({
+              type: "session",
+              targetProject: targetProj,
+              targetSid,
+              position: isUpper ? "before" : "after"
+            });
+            return;
+          }
+        }
+
+        // B. 悬停在某个项目工作区头部文件夹上 (高亮文件夹，释放移入该项目顶部)
+        const projHeader = el.closest("[data-drag-project-folder]") as HTMLElement | null;
+        if (projHeader) {
+          const targetProj = projHeader.getAttribute("data-drag-project-folder");
+          if (targetProj) {
+            setDropTarget({
+              type: "folder",
+              targetProject: targetProj
+            });
+            return;
+          }
+        }
+
+        // C. 悬停在未分组文件夹头部上 (高亮未分组，释放移入未分组顶部)
+        const recentHeader = el.closest("[data-drag-recent-folder]") as HTMLElement | null;
+        if (recentHeader) {
+          setDropTarget({
+            type: "folder",
+            targetProject: "_general"
+          });
+          return;
+        }
+
+        // D. 悬停在空工作区区域上
+        const emptyTarget = el.closest("[data-drag-empty-project]") as HTMLElement | null;
+        if (emptyTarget) {
+          const targetProj = emptyTarget.getAttribute("data-drag-empty-project");
+          if (targetProj) {
+            setDropTarget({
+              type: "folder",
+              targetProject: targetProj
+            });
+            return;
+          }
+        }
+
+        setDropTarget(null);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (dragPendingRef.current) {
+        clearTimeout(dragPendingRef.current.timerId);
+      }
+
+      if (isDraggingRef.current && dragPendingRef.current) {
+        const source = dragPendingRef.current.source;
+        const target = dropTarget;
+
+        if (target) {
+          executeDrop(source, target);
+        }
+
+        justDroppedRef.current = true;
+        setTimeout(() => {
+          justDroppedRef.current = false;
+        }, 120);
+      }
+
+      dragPendingRef.current = null;
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      setDragSource(null);
+      setDropTarget(null);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dropTarget, projects, recentSessions]);
+
+  // 执行最终放置与位置更新
+  const executeDrop = (source: DragSource, target: DropTargetState) => {
+    // 1. 工作区重排
+    if (source.type === "project") {
+      if (target.type === "project" && target.targetProject) {
+        const names = projects.map((p) => p.name);
+        const fromIdx = names.indexOf(source.id);
+        if (fromIdx !== -1) {
+          names.splice(fromIdx, 1);
+          let toIdx = names.indexOf(target.targetProject);
+          if (target.position === "after") toIdx += 1;
+          names.splice(toIdx, 0, source.id);
+          onReorderProjects?.(names);
+        }
+      }
+      return;
+    }
+
+    // 2. 会话重排或跨工作区/未分组移动
+    if (source.type === "session") {
+      const fromProj = source.project || "_general";
+      const toProj = target.targetProject || "_general";
+
+      if (target.type === "session" && target.targetSid) {
+        if (fromProj === toProj) {
+          // 同一项目或未分组内部重排
+          const list = fromProj === "_general" ? recentSessions : (projects.find((p) => p.name === fromProj)?.sessions || []);
+          const sids = list.map((s) => s.session_id);
+          const fromIdx = sids.indexOf(source.id);
+          if (fromIdx !== -1) {
+            sids.splice(fromIdx, 1);
+            let toIdx = sids.indexOf(target.targetSid);
+            if (target.position === "after") toIdx += 1;
+            sids.splice(toIdx, 0, source.id);
+            onReorderSessions?.(fromProj, sids);
+          }
+        } else {
+          // 跨工作区或在工作区与未分组之间移动到指定顺序
+          const targetList = toProj === "_general" ? recentSessions : (projects.find((p) => p.name === toProj)?.sessions || []);
+          const sids = targetList.map((s) => s.session_id).filter((id) => id !== source.id);
+          let toIdx = sids.indexOf(target.targetSid);
+          if (target.position === "after") toIdx += 1;
+          sids.splice(toIdx, 0, source.id);
+
+          // 自动展开目标工作区，确保移入后立即可见
+          if (toProj !== "_general") {
+            setExpandedProjects((prev) => ({ ...prev, [toProj]: true }));
+          }
+          onMoveSessionToProject?.(source.id, fromProj, toProj, sids);
+        }
+        return;
+      }
+
+      if (target.type === "folder") {
+        if (fromProj === toProj) return;
+        const targetList = toProj === "_general" ? recentSessions : (projects.find((p) => p.name === toProj)?.sessions || []);
+        const sids = [source.id, ...targetList.map((s) => s.session_id).filter((id) => id !== source.id)];
+
+        if (toProj !== "_general") {
+          setExpandedProjects((prev) => ({ ...prev, [toProj]: true }));
+        }
+        onMoveSessionToProject?.(source.id, fromProj, toProj, sids);
+      }
     }
   };
 
@@ -174,10 +545,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* 工作区多项目目录树（展示全部项目，带置顶与更多操作） */}
-        <div className="px-3 pt-1 flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} className="px-3 pt-1 flex-1 overflow-y-auto">
           <div className="space-y-1">
             <div 
-              onClick={() => setIsProjectsExpanded(!isProjectsExpanded)}
+              onClick={handleToggleProjectsHeader}
               className="flex items-center justify-between px-1.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-semibold rounded-lg hover:bg-gray-100/70 dark:hover:bg-[#1a1d27] transition cursor-pointer"
             >
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -220,7 +591,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             ) : (
               displayProjects.map((proj) => {
               const isCurrent = proj.name === projectName;
-              const isExpanded = expandedProjects[proj.name] ?? isCurrent;
+              // 解决需求 1：展开状态使用独立记录的 expandedProjects，默认全部展开，切换会话不再收起
+              const isExpanded = expandedProjects[proj.name] ?? true;
               const projSessions = proj.sessions || [];
               const isPinned = proj.is_pinned;
 
@@ -229,21 +601,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
               const shouldShowAll = isShowAll;
               const visibleSessions = shouldShowAll ? projSessions : projSessions.slice(0, 5);
 
+              const isProjectDragging = isDragging && dragSource?.type === "project" && dragSource.id === proj.name;
+              const isFolderDropTarget = dropTarget?.type === "folder" && dropTarget.targetProject === proj.name;
+
               return (
-                <div key={proj.name} className="space-y-0.5 group/proj">
-                  {/* 项目文件夹栏 (悬浮显示居中的 '...' 按钮，支持右键操作) */}
+                <div 
+                  key={proj.name} 
+                  data-drag-project={proj.name}
+                  className="space-y-0.5 group/proj relative"
+                >
+                  {/* 项目文件夹栏 (悬浮显示居中的 ... 按钮，支持长按拖拽排序与放入会话) */}
                   <div 
-                    onClick={() => toggleProject(proj.name)}
+                    data-drag-project-folder={proj.name}
+                    onMouseDown={(e) => handleItemMouseDown(e, { type: "project", id: proj.name, title: proj.name })}
+                    onClick={() => {
+                      if (justDroppedRef.current) return;
+                      toggleProject(proj.name);
+                    }}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       setActiveProjectMenu({ name: proj.name, x: e.clientX, y: e.clientY });
                     }}
                     className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition relative border ${
-                      isCurrent 
-                        ? "bg-[#e2e6eb] dark:bg-[#202535] text-gray-900 dark:text-blue-300 border-transparent dark:border-blue-500/20" 
-                        : "border-transparent text-gray-700 dark:text-gray-400 hover:bg-[#eceef0] dark:hover:bg-[#181a24] hover:text-gray-900 dark:hover:text-gray-200"
-                    }`}
+                      isFolderDropTarget
+                        ? "ring-2 ring-blue-500/80 bg-blue-50/80 dark:bg-blue-900/40 border-blue-400 text-blue-700 dark:text-blue-300"
+                        : isCurrent 
+                          ? "bg-[#e2e6eb] dark:bg-[#202535] text-gray-900 dark:text-blue-300 border-transparent dark:border-blue-500/20" 
+                          : "border-transparent text-gray-700 dark:text-gray-400 hover:bg-[#eceef0] dark:hover:bg-[#181a24] hover:text-gray-900 dark:hover:text-gray-200"
+                    } ${isProjectDragging ? "opacity-35 pointer-events-none" : ""}`}
                   >
+                    {/* 拖拽插入蓝色指示线 (对标图二) */}
+                    {dropTarget?.type === "project" && dropTarget.targetProject === proj.name && (
+                      <DropIndicator position={dropTarget.position === "after" ? "bottom" : "top"} />
+                    )}
+
                     <div className="flex items-center gap-1.5 truncate flex-1 min-w-0 pr-1">
                       {isExpanded ? <ChevronDown size={13} className="text-gray-400 shrink-0" /> : <ChevronRight size={13} className="text-gray-400 shrink-0" />}
                       <Folder size={14} className={isCurrent ? "text-blue-600 shrink-0" : "text-gray-500 shrink-0"} />
@@ -252,7 +643,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      {/* 鼠标悬停显示 '...' 居中操作按钮 */}
+                      {/* 鼠标悬停显示 ... 居中操作按钮 */}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -272,7 +663,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                   </div>
 
-                  {/* 展开后的会话列表项 (对标需求 5：从上向下丝滑摊开/推出，收起时反向向上平滑收拢) */}
+                  {/* 展开后的会话列表项 */}
                   <div
                     className={`grid transition-all duration-200 ease-out ${
                       isExpanded 
@@ -283,18 +674,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="overflow-hidden">
                       <div className="pl-4 space-y-0.5 border-l-2 border-gray-200/80 dark:border-gray-800 ml-3 py-0.5">
                         {projSessions.length === 0 ? (
-                          <div className="px-2 py-1 text-[11px] text-gray-400 italic">暂无历史消息</div>
+                          <div 
+                            data-drag-empty-project={proj.name}
+                            className={`px-2 py-1 text-[11px] rounded transition ${
+                              isFolderDropTarget ? "bg-blue-50/80 dark:bg-blue-900/30 text-blue-600" : "text-gray-400 italic"
+                            }`}
+                          >
+                            {isFolderDropTarget ? "释放将会话移入此工作区" : "暂无历史消息"}
+                          </div>
                         ) : (
                           <>
                           {visibleSessions.map((s) => {
                             const isActive = isCurrent && s.session_id === activeSessionId;
                             const displayTitle = s.current_goal || (s.session_id === "default" ? "默认会话" : s.session_id);
                             const isSessionPinned = s.is_pinned;
+                            const isThisDragging = isDragging && dragSource?.type === "session" && dragSource.id === s.session_id && dragSource.project === proj.name;
 
                             return (
                               <div
                                 key={`${proj.name}-${s.session_id}`}
-                                onClick={() => onSelectSession(s.session_id, proj.name)}
+                                data-drag-session={s.session_id}
+                                data-drag-session-project={proj.name}
+                                onMouseDown={(e) => handleItemMouseDown(e, { type: "session", id: s.session_id, project: proj.name, title: displayTitle })}
+                                onClick={() => {
+                                  if (justDroppedRef.current) return;
+                                  onSelectSession(s.session_id, proj.name);
+                                }}
                                 onContextMenu={(e) => {
                                   e.preventDefault();
                                   setActiveSessionMenu({ project: proj.name, sid: s.session_id, x: e.clientX, y: e.clientY });
@@ -303,8 +708,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   isActive
                                     ? "bg-blue-100/80 dark:bg-blue-900/30 text-blue-900 dark:text-blue-300 shadow-xs border-transparent dark:border-blue-700/30"
                                     : "border-transparent text-gray-600 dark:text-gray-400 hover:bg-[#eceef0] dark:hover:bg-[#181a24] hover:text-gray-900 dark:hover:text-gray-200"
-                                }`}
+                                } ${isThisDragging ? "opacity-35 pointer-events-none" : ""}`}
                               >
+                                {/* 会话拖拽指示线 (对标图二) */}
+                                {dropTarget?.type === "session" && dropTarget.targetSid === s.session_id && dropTarget.targetProject === proj.name && (
+                                  <DropIndicator position={dropTarget.position === "after" ? "bottom" : "top"} />
+                                )}
+
                                 <div className="flex items-center gap-1.5 truncate flex-1 min-w-0 pr-1">
                                   {isSessionPinned && <Pin size={10} className="text-blue-600 shrink-0 rotate-45" />}
                                   <span className="truncate max-w-[125px]" title={displayTitle}>
@@ -368,15 +778,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           </div>
 
-          {/* ================= 2. 下半部分：最近 ∨ (带 ... 和 编辑图标，对标图三) ================= */}
+          {/* ================= 2. 下半部分：未分组 ∨ (对标图二 📁 未分组 与不在工作区的会话) ================= */}
           <div className="space-y-1 border-t border-gray-200/60 dark:border-[#1e222f] pt-2.5">
             <div 
-              onClick={() => setIsRecentExpanded(!isRecentExpanded)}
-              className="flex items-center justify-between px-1.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-semibold rounded-lg hover:bg-gray-100/70 dark:hover:bg-[#1a1d27] transition cursor-pointer"
+              data-drag-recent-folder="_general"
+              onClick={() => {
+                if (justDroppedRef.current) return;
+                handleToggleRecentHeader();
+              }}
+              className={`flex items-center justify-between px-1.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-semibold rounded-lg hover:bg-gray-100/70 dark:hover:bg-[#1a1d27] transition cursor-pointer relative ${
+                dropTarget?.type === "folder" && dropTarget.targetProject === "_general"
+                  ? "ring-2 ring-blue-500/80 bg-blue-50/80 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+                  : ""
+              }`}
             >
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
                 {isRecentExpanded ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
-                <span className="font-bold">最近</span>
+                <Folder size={14} className="text-gray-500 shrink-0" />
+                <span className="font-bold">未分组</span>
                 <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal">
                   ({recentSessions.length})
                 </span>
@@ -403,31 +822,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {isRecentExpanded && (
               <div className="space-y-0.5 pl-0.5 pb-2">
                 {recentSessions.length === 0 ? (
-                  <div className="px-3 py-2 text-center text-xs text-gray-400 dark:text-gray-500 italic">
-                    暂无独立对话
+                  <div 
+                    data-drag-empty-project="_general"
+                    className={`px-3 py-2 text-center text-xs rounded-lg transition ${
+                      dropTarget?.type === "folder" && dropTarget.targetProject === "_general"
+                        ? "bg-blue-50/80 dark:bg-blue-900/30 text-blue-600"
+                        : "text-gray-400 dark:text-gray-500 italic"
+                    }`}
+                  >
+                    {dropTarget?.type === "folder" && dropTarget.targetProject === "_general" ? "释放移入未分组" : "暂无独立对话"}
                   </div>
                 ) : (
                   recentSessions.map((s) => {
                     const isRecentActive = (projectName === "" || projectName === "_general") && s.session_id === activeSessionId;
                     const displayTitle = s.current_goal || (s.session_id === "default" ? "独立对话" : s.session_id);
                     const isSessionPinned = s.is_pinned;
+                    const isThisDragging = isDragging && dragSource?.type === "session" && dragSource.id === s.session_id && dragSource.project === "_general";
 
                     return (
                       <div
                         key={"recent-" + s.session_id}
-                        onClick={() => onSelectSession(s.session_id, "_general")}
+                        data-drag-session={s.session_id}
+                        data-drag-session-project="_general"
+                        onMouseDown={(e) => handleItemMouseDown(e, { type: "session", id: s.session_id, project: "_general", title: displayTitle })}
+                        onClick={() => {
+                          if (justDroppedRef.current) return;
+                          onSelectSession(s.session_id, "_general");
+                        }}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           setActiveSessionMenu({ project: "_general", sid: s.session_id, x: e.clientX, y: e.clientY });
                         }}
-                        className={"group/recent flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition relative " + (
+                        className={`group/recent flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition relative ${
                           isRecentActive
                             ? "bg-blue-100/80 dark:bg-blue-900/40 text-blue-900 dark:text-blue-200 shadow-2xs"
                             : "text-gray-600 dark:text-gray-400 hover:bg-[#eceef0] dark:hover:bg-[#181a24] hover:text-gray-900 dark:hover:text-gray-200"
-                        )}
+                        } ${isThisDragging ? "opacity-35 pointer-events-none" : ""}`}
                       >
+                        {/* 未分组会话拖拽指示线 (对标图二) */}
+                        {dropTarget?.type === "session" && dropTarget.targetSid === s.session_id && dropTarget.targetProject === "_general" && (
+                          <DropIndicator position={dropTarget.position === "after" ? "bottom" : "top"} />
+                        )}
+
                         <div className="flex items-center gap-1.5 truncate flex-1 min-w-0 pr-1">
-                          <MessageSquare size={13} className={isRecentActive ? "text-blue-600 shrink-0" : "text-gray-400 shrink-0"} />
                           {isSessionPinned && <Pin size={10} className="text-blue-600 shrink-0 rotate-45" />}
                           <span className="truncate max-w-[130px]" title={displayTitle}>
                             {displayTitle}
@@ -465,19 +902,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-3 border-t border-[#f1f3f5] dark:border-[#1e222f] space-y-0.5 shrink-0 bg-[#f8f9fa] dark:bg-[#10121a]">
         <button
           onClick={onOpenPlugins}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:bg-[#eceef0] dark:hover:bg-[#181a24] transition font-medium cursor-pointer"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:bg-[#eceef0] dark:hover:bg-[#181a24] transition-all duration-150 active:scale-[0.98] font-medium cursor-pointer"
         >
           <Puzzle size={16} className="text-gray-500 dark:text-gray-400" />
           <span>插件市场</span>
         </button>
         <button
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:bg-[#eceef0] dark:hover:bg-[#181a24] transition font-medium cursor-pointer"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:bg-[#eceef0] dark:hover:bg-[#181a24] transition-all duration-150 active:scale-[0.98] font-medium cursor-pointer"
         >
           <Settings size={16} className="text-gray-500 dark:text-gray-400" />
           <span>设置</span>
         </button>
       </div>
+
+      {/* 拖拽跟随半透明阴影预览项 (对标图二) */}
+      {isDragging && dragSource && (
+        <div
+          style={{
+            position: "fixed",
+            left: mousePos.x + 10,
+            top: mousePos.y - 14,
+            pointerEvents: "none",
+            zIndex: 99999,
+            width: 190,
+          }}
+          className="px-2.5 py-1.5 rounded-lg bg-gray-200/90 dark:bg-[#202535]/95 border border-blue-500/30 text-xs font-medium text-gray-800 dark:text-gray-100 shadow-xl flex items-center justify-between backdrop-blur-xs select-none"
+        >
+          <div className="flex items-center gap-1.5 truncate flex-1 min-w-0 pr-1">
+            {dragSource.type === "project" ? (
+              <Folder size={13} className="text-blue-600 shrink-0" />
+            ) : (
+              <Folder size={13} className="text-gray-400 shrink-0" />
+            )}
+            <span className="truncate">{dragSource.title}</span>
+          </div>
+          <MoreHorizontal size={14} className="text-gray-400 shrink-0" />
+        </div>
+      )}
 
       {/* 1. 项目工作区操作下拉菜单 */}
       {activeProjectMenu && (
@@ -527,7 +989,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </button>
 
-            <div className="border-t border-gray-100 dark:border-gray-800 dark:border-gray-800 my-0.5" />
+            <div className="border-t border-gray-100 dark:border-gray-800 my-0.5" />
 
             <button
               onClick={() => {
@@ -593,7 +1055,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </button>
 
-            <div className="border-t border-gray-100 dark:border-gray-800 dark:border-gray-800 my-0.5" />
+            <div className="border-t border-gray-100 dark:border-gray-800 my-0.5" />
 
             <button
               onClick={() => {

@@ -148,9 +148,14 @@ export const TrajectoryTimeline: React.FC<TrajectoryTimelineProps> = ({
                     onClick={() => toggleExpand(stepId)}
                     className="flex items-start gap-2.5 cursor-pointer"
                   >
-                    {/* TOOL 醒目标签 */}
-                    <span className="px-2 py-0.5 text-[10px] font-bold font-mono tracking-wider text-[#b45309] bg-[#fef3c7] dark:bg-[#38260b] dark:text-[#fcd34d] border border-[#fde68a] dark:border-[#78350f] rounded shrink-0 select-none mt-0.5">
-                      TOOL
+                    {/* TOOL 醒目标签：悬停时原位切换为折叠/展开图标 */}
+                    <span className="relative w-11 h-[18px] flex items-center justify-center shrink-0 mt-0.5 select-none">
+                      <span className="px-2 py-0.5 text-[10px] font-bold font-mono tracking-wider text-[#b45309] bg-[#fef3c7] dark:bg-[#38260b] dark:text-[#fcd34d] border border-[#fde68a] dark:border-[#78350f] rounded group-hover:hidden">
+                        TOOL
+                      </span>
+                      <span className="hidden group-hover:flex items-center justify-center text-gray-500 dark:text-gray-400">
+                        {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      </span>
                     </span>
 
                     {/* 工具名称、请求入参、箭头与执行结果摘要 */}
@@ -179,11 +184,10 @@ export const TrajectoryTimeline: React.FC<TrajectoryTimelineProps> = ({
                       </span>
                     </div>
 
-                    {/* 耗时与展开切换 */}
+                    {/* 耗时 / 运行态（折叠图标已迁移至左侧 TOOL 徽标处） */}
                     <div className="flex items-center gap-1.5 text-gray-400 text-[10px] shrink-0 font-mono ml-auto select-none">
                       {step.elapsed !== undefined && <span>{step.elapsed}s</span>}
                       {step.status === "running" && <Loader2 size={12} className="animate-spin text-amber-500" />}
-                      {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                     </div>
                   </div>
 

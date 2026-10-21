@@ -274,6 +274,11 @@ def scan_project_sessions(proj_dir: Path) -> List[Dict[str, Any]]:
                             wm_goal = row.get("data", {}).get("working_memory", {}).get("current_goal", "")
                             if wm_goal and not current_goal:
                                 current_goal = wm_goal[:28] + ("..." if len(wm_goal) > 28 else "")
+                        elif t == "rollback":
+                            turn_count = max(0, turn_count - 1)
+                        elif t in ("session_cleared", "session_reset"):
+                            turn_count = 0
+                            current_goal = ""
                         elif t == "user_message" and not current_goal:
                             content = row.get("data", {}).get("content", "")
                             if content:
@@ -294,8 +299,12 @@ def scan_project_sessions(proj_dir: Path) -> List[Dict[str, Any]]:
         else:
             time_ago = "1个月"
 
-        # 仅当会话包含实际对话轮次、用户提问或自定义标题时，才作为历史会话返回
-        if turn_count == 0 and not current_goal and sid not in custom_titles and sid != "default":
+        # 仅当会话包含有效完成轮次或自定义标题时才作为历史会话返回；若轮次已归零且非 default 会话，物理删除磁盘文件
+        if turn_count == 0 and sid not in custom_titles and sid != "default":
+            try:
+                f.unlink()
+            except Exception:
+                pass
             continue
 
         is_pinned = sid in pinned_sids
@@ -310,8 +319,16 @@ def scan_project_sessions(proj_dir: Path) -> List[Dict[str, Any]]:
             "mtime": mtime
         })
 
-    # 置顶优先，其余按活跃时间倒序
-    sessions.sort(key=lambda x: (1 if x.get("is_pinned") else 0, x["mtime"]), reverse=True)
+    # 置顶优先，在自定义排序列表中的优先排在前面，其余按活跃时间倒序
+    sess_orders = pins.get("session_order", {}).get(pname, [])
+    def get_sess_sort_key(s):
+        sid = s.get("session_id", "")
+        is_pin = 1 if s.get("is_pinned") else 0
+        if sid in sess_orders:
+            return (is_pin, 1, -sess_orders.index(sid))
+        return (is_pin, 0, s.get("mtime", 0))
+
+    sessions.sort(key=get_sess_sort_key, reverse=True)
     return sessions
 
 def get_all_projects_metadata() -> List[Dict[str, Any]]:
@@ -479,7 +496,12 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
                     tool_results_by_turn[tid][tc_id] = data.get("content", "")
 
             elif t == "user_message":
-                turns_map[tid]["user_prompt"] = data.get("content", "")
+                new_prompt = data.get("content", "")
+                existing_prompt = turns_map[tid].get("user_prompt", "")
+                if new_prompt and (not existing_prompt or len(new_prompt) >= len(existing_prompt)):
+                    turns_map[tid]["user_prompt"] = new_prompt
+                elif not existing_prompt:
+                    turns_map[tid]["user_prompt"] = new_prompt
                 turns_map[tid]["attachments"] = data.get("attachments", [])
                 if data.get("permission_mode"):
                     turns_map[tid]["permission_mode"] = data.get("permission_mode")
@@ -559,6 +581,12 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
 
             elif t in ("turn_finished", "turn_aborted"):
                 turn_end_times[tid] = max(turn_end_times.get(tid, 0), row.get("timestamp", time.time()))
+                if "end_time" in data and float(data["end_time"]) > 0:
+                    turn_end_times[tid] = float(data["end_time"])
+                if "start_time" in data and float(data["start_time"]) > 0:
+                    turn_start_times[tid] = float(data["start_time"])
+                if "elapsed" in data and float(data["elapsed"]) > 0:
+                    turns_map[tid]["elapsed"] = round(float(data["elapsed"]), 1)
                 wm = data.get("working_memory", {})
                 working_memory_last = wm
                 if wm.get("current_goal") and not turns_map[tid]["user_prompt"]:
@@ -569,13 +597,21 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
     for tid, tdata in turns_map.items():
         t_start = turn_start_times.get(tid)
         t_end = turn_end_times.get(tid)
-        if t_start and t_end and t_end >= t_start:
-            tdata["elapsed"] = round(max(1.0, t_end - t_start), 1)
-        elif not tdata.get("elapsed"):
-            tdata["elapsed"] = 1.0
-        # 严格使用历史持久化时间戳；若均无则以历史文件物理修改时间 mtime 兜底，绝不使用当前重启时间
-        tdata["timestamp"] = t_end or t_start or file_mtime
-        tdata["start_timestamp"] = t_start or tdata["timestamp"]
+        if not tdata.get("elapsed"):
+            if t_start and t_end and (t_end - t_start >= 0.5):
+                tdata["elapsed"] = round(t_end - t_start, 1)
+            else:
+                # 针对旧日志兜底：根据此轮工具执行步骤数量智能估算真实耗时，避免全盘固定为死板的 1 秒
+                tool_steps_cnt = len([s for s in tdata.get("steps", []) if s.get("type") == "tool"])
+                if tool_steps_cnt > 0:
+                    tdata["elapsed"] = round(max(2.0, tool_steps_cnt * 2.5), 1)
+                else:
+                    tdata["elapsed"] = 1.0
+        # 严格使用历史持久化时间戳；区分提问发起时间与完成输出时间
+        tdata["start_timestamp"] = t_start or (t_end - tdata["elapsed"] if t_end and tdata.get("elapsed") else file_mtime)
+        tdata["completed_timestamp"] = t_end or (t_start + tdata["elapsed"] if t_start and tdata.get("elapsed") else file_mtime)
+        tdata["timestamp"] = tdata["completed_timestamp"]
+        # 严格保持原始响应状态，未闭环或空回复时不伪造错误文本，交由前端状态机判断
 
     # 填充缺失工具的输出
     for tid, tdata in turns_map.items():
@@ -726,7 +762,7 @@ def test_provider_connection(req: ModelTestRequest):
 
     try:
         from openai import OpenAI
-        test_client = OpenAI(api_key=key, base_url=url, timeout=12.0)
+        test_client = OpenAI(api_key=key, base_url=url, timeout=7.0, max_retries=0)
         test_model = (req.model or "").strip() or "deepseek-chat"
         try:
             test_client.chat.completions.create(
@@ -737,14 +773,24 @@ def test_provider_connection(req: ModelTestRequest):
             return {"success": True, "message": f"连接成功！模型「{test_model}」调用正常响应。"}
         except Exception as e_chat:
             err_str = str(e_chat)
-            if "model" in err_str.lower() or "not found" in err_str.lower() or "404" in err_str:
+            err_lower = err_str.lower()
+            is_404 = ("404" in err_str or "not_found" in err_lower or "not found" in err_lower) and "capacity" not in err_lower
+            if is_404:
                 try:
-                    m_list = test_client.models.list()
+                    m_list = test_client.models.list(timeout=3.0)
                     available_names = [getattr(m, "id", str(m)) for m in getattr(m_list, "data", [])][:4]
                     avail_hint = f"（检测到可用模型: {", ".join(available_names)}）" if available_names else ""
                     return {"success": False, "error": f"API Key 鉴权通过，但模型「{test_model}」在服务端不存在 (404 Not Found)。{avail_hint} 请核对映射模型名称。"}
                 except Exception:
                     return {"success": False, "error": f"调用失败 (404 Not Found): 请核对 Base URL 路径是否正确，以及模型名称「{test_model}」是否在该平台存在。"}
+            elif "502" in err_str or "bad gateway" in err_lower:
+                return {"success": False, "error": "网关代理异常 (502 Bad Gateway): 代理工具 (如 Antigravity Tools) 无法连通上游目标模型服务器，请检查代理工具运行状态或代理网络设置。"}
+            elif "503" in err_str or "capacity" in err_lower or "overload" in err_lower or "unavailable" in err_lower:
+                return {"success": False, "error": f"模型服务暂时不可用 (503 Service Unavailable): 上游服务商报告当前模型容量已满 (Capacity Exhausted) 或当前拥堵，请稍后重试或切换其他模型。"}
+            elif "timeout" in err_lower or "timed out" in err_lower:
+                return {"success": False, "error": "请求超时 (Timeout): 接口超过 7 秒未响应，请检查上游网络与代理连通性。"}
+            elif "401" in err_str or "unauthorized" in err_lower or "invalid_api_key" in err_lower:
+                return {"success": False, "error": "鉴权失败 (401 Unauthorized): API Key 无效或未授权，请检查密钥是否正确。"}
             raise e_chat
     except Exception as e:
         logger.warning(f"Model test connection failed: {e}")
@@ -972,16 +1018,82 @@ class SessionMoveRequest(BaseModel):
     from_project: str = "_general"
     to_project: str
 
+class WorkspaceReorderRequest(BaseModel):
+    project_order: List[str]
+
+class SessionReorderRequest(BaseModel):
+    project: str
+    session_order: List[str]
+
+@app.post("/api/workspaces/reorder")
+def reorder_workspaces(req: WorkspaceReorderRequest):
+    """保存用户拖拽调整的工作区自定义展示顺序"""
+    pins = load_pins_config()
+    pins["project_order"] = req.project_order
+    current_pins = pins.get("pinned_projects", [])
+    if current_pins:
+        pins["pinned_projects"] = [p for p in req.project_order if p in current_pins]
+    save_pins_config(pins)
+    return {"success": True, "project_order": req.project_order}
+
+@app.post("/api/sessions/reorder")
+def reorder_sessions(req: SessionReorderRequest):
+    """保存用户拖拽调整的会话自定义展示顺序"""
+    pins = load_pins_config()
+    pname = req.project or "_general"
+    pins.setdefault("session_order", {})[pname] = req.session_order
+    save_pins_config(pins)
+    return {"success": True, "project": pname, "session_order": req.session_order}
+
 @app.post("/api/sessions/move")
 def move_session(req: SessionMoveRequest):
-    """将会话从最近自由对话移入指定项目工作区"""
+    """将会话从最近自由对话移入指定项目工作区，或在工作区之间相互移动"""
     src_file = HISTORY_ROOT / (req.from_project or "_general") / f"{req.session_id}.jsonl"
     if not src_file.exists():
-        raise HTTPException(status_code=404, detail="源会话历史文件不存在")
-    dst_dir = HISTORY_ROOT / req.to_project
+        if HISTORY_ROOT.exists():
+            for pd in HISTORY_ROOT.iterdir():
+                if pd.is_dir() and (pd / f"{req.session_id}.jsonl").exists():
+                    src_file = pd / f"{req.session_id}.jsonl"
+                    break
+        if not src_file.exists():
+            dst_dir = HISTORY_ROOT / (req.to_project or "_general")
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst_file = dst_dir / f"{req.session_id}.jsonl"
+            dst_file.touch(exist_ok=True)
+            src_file = dst_file
+
+    dst_dir = HISTORY_ROOT / (req.to_project or "_general")
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst_file = dst_dir / f"{req.session_id}.jsonl"
-    shutil.move(str(src_file), str(dst_file))
+    if src_file.resolve() != dst_file.resolve():
+        shutil.move(str(src_file), str(dst_file))
+
+    # 同步维护 pins_config 中的 session_order
+    try:
+        pins = load_pins_config()
+        changed = False
+        from_p = req.from_project or "_general"
+        to_p = req.to_project or "_general"
+        if from_p in pins.get("session_order", {}):
+            pins["session_order"][from_p] = [s for s in pins["session_order"][from_p] if s != req.session_id]
+            changed = True
+        to_orders = pins.setdefault("session_order", {}).setdefault(to_p, [])
+        if req.session_id not in to_orders:
+            to_orders.insert(0, req.session_id)
+            changed = True
+        if req.session_id in pins.get("pinned_sessions", {}).get(from_p, []):
+            pins["pinned_sessions"][from_p].remove(req.session_id)
+            pins.setdefault("pinned_sessions", {}).setdefault(to_p, []).append(req.session_id)
+            changed = True
+        if req.session_id in pins.get("custom_titles", {}).get(from_p, {}):
+            t = pins["custom_titles"][from_p].pop(req.session_id)
+            pins.setdefault("custom_titles", {}).setdefault(to_p, {})[req.session_id] = t
+            changed = True
+        if changed:
+            save_pins_config(pins)
+    except Exception:
+        pass
+
     return {"success": True, "session_id": req.session_id, "project": req.to_project}
 
 @app.post("/api/sessions/create")
@@ -1560,6 +1672,10 @@ class SessionClearRequest(BaseModel):
     project: str
     session_id: str
 
+class SessionRollbackRequest(BaseModel):
+    project: str
+    session_id: str
+
 PINS_FILE = HISTORY_ROOT / "pins_config.json"
 
 def load_pins_config() -> Dict[str, Any]:
@@ -1759,6 +1875,89 @@ def clear_session_content(req: SessionClearRequest):
         except Exception:
             pass
     return {"success": True}
+
+@app.post("/api/sessions/rollback")
+def rollback_session_turn(req: SessionRollbackRequest):
+    """撤销指定会话的最后一轮对话，还原磁盘改动并清除该轮历史"""
+    proj_name = req.project or default_workspace.root.name
+    sid = req.session_id or "default"
+
+    ag = bridge.get_or_create_agent(proj_name, sid)
+    if not ag or not ag.context_manager:
+        raise HTTPException(status_code=404, detail="未找到对应的会话或智能体实例")
+
+    cm = ag.context_manager
+    if getattr(cm, "current_turn", None) is not None:
+        return {
+            "success": False,
+            "message": "智能体当前正在执行思考或工具调用中，请等待本轮执行完毕后再撤销。",
+            "restored_files": []
+        }
+
+    if not cm.completed_turns:
+        cm.restore_from_disk()
+
+    if not cm.completed_turns:
+        return {
+            "success": False,
+            "message": "当前会话没有可供撤销的已完成轮次",
+            "restored_files": [],
+            "remaining_turns_count": 0
+        }
+
+    rolled_turn = cm.completed_turns[-1]
+    rolled_turn_id = rolled_turn.turn_id
+    success = cm.rollback_last_turn(restore_disk=True)
+    restored_files = getattr(cm, "last_rolled_back_files", []) or []
+    remaining_count = len(cm.completed_turns)
+
+    if success:
+        if remaining_count == 0:
+            # 关键修改：若撤销导致会话已无任何轮次，物理删除磁盘 jsonl 文件与快照，杜绝留存空文件
+            hist_file = getattr(cm, "history_file", None)
+            if not hist_file or not hist_file.exists():
+                hist_file = HISTORY_ROOT / proj_name / f"{sid}.jsonl"
+            if hist_file.exists():
+                try:
+                    hist_file.unlink()
+                except Exception as e:
+                    logger.warning(f"删除已清空会话文件失败: {e}")
+            if hasattr(cm, "snapshot_manager") and cm.snapshot_manager:
+                try:
+                    cm.snapshot_manager.clear_session_snapshots(sid)
+                except Exception:
+                    pass
+            if hasattr(bridge, "evict_session_agent"):
+                bridge.evict_session_agent(proj_name, sid)
+            try:
+                pins = load_pins_config()
+                changed = False
+                pinned_sids = pins.get("pinned_sessions", {}).get(proj_name, [])
+                if sid in pinned_sids:
+                    pins["pinned_sessions"][proj_name] = [s for s in pinned_sids if s != sid]
+                    changed = True
+                custom_titles = pins.get("custom_titles", {}).get(proj_name, {})
+                if sid in custom_titles:
+                    custom_titles.pop(sid, None)
+                    changed = True
+                sess_order = pins.get("session_order", {}).get(proj_name, [])
+                if sid in sess_order:
+                    pins["session_order"][proj_name] = [s for s in sess_order if s != sid]
+                    changed = True
+                if changed:
+                    save_pins_config(pins)
+            except Exception:
+                pass
+        else:
+            cm.vacuum()
+
+    logger.info(f"API /api/sessions/rollback: Session '{proj_name}:{sid}' rolled back turn {rolled_turn_id}, success={success}, remaining={remaining_count}, restored files: {restored_files}")
+    return {
+        "success": success,
+        "turn_id": rolled_turn_id,
+        "restored_files": restored_files,
+        "remaining_turns_count": remaining_count
+    }
 
 # 启动时自动迁移当前默认工作区及所有项目中遗留的附件目录
 try:

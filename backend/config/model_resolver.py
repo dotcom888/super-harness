@@ -102,26 +102,68 @@ def resolve_active_model_config(
     matched_provider = None
     target_model_clean = target_model.strip()
     if providers:
-        # 3.1 精确匹配模型名
+        # 3.1 精确匹配模型名 (优先选择有 API Key 的提供方)
         for p in providers:
             p_models = [m.strip() for m in p.get("models", [])]
-            if target_model_clean in p_models:
-                p_key = p.get("api_key", "").strip()
-                if p_key:
-                    matched_provider = p
-                    break
+            if target_model_clean in p_models and p.get("api_key", "").strip():
+                matched_provider = p
+                break
 
         # 3.2 大小写不敏感匹配
         if not matched_provider:
             for p in providers:
                 p_models_lower = [m.strip().lower() for m in p.get("models", [])]
-                if target_model_clean.lower() in p_models_lower:
-                    p_key = p.get("api_key", "").strip()
-                    if p_key:
+                if target_model_clean.lower() in p_models_lower and p.get("api_key", "").strip():
+                    matched_provider = p
+                    break
+
+        # 3.3 品牌/厂商名称与模型前缀智能关联匹配 (例如 deepseek-chat 智能绑定 deepseek 提供方)
+        if not matched_provider:
+            target_lower = target_model_clean.lower()
+            for p in providers:
+                p_key = p.get("api_key", "").strip()
+                if not p_key:
+                    continue
+                p_name = p.get("name", "").strip().lower()
+                p_models_lower = [m.strip().lower() for m in p.get("models", [])]
+
+                # A. 检查提供方名称与目标模型名称是否互包含 (例如 "deepseek" in "deepseek-chat")
+                if p_name and (p_name in target_lower or target_lower in p_name):
+                    matched_provider = p
+                    break
+
+                # B. 检查提供方已有模型的前缀是否与目标模型前缀一致 (例如都以 deepseek- 开头)
+                for pm in p_models_lower:
+                    brand_prefix = pm.split("-")[0] if "-" in pm else pm
+                    if brand_prefix and len(brand_prefix) >= 3 and (target_lower.startswith(brand_prefix) or brand_prefix in target_lower):
                         matched_provider = p
                         break
+                if matched_provider:
+                    break
 
-        # 3.3 兜底回退：若未配置指定模型但有可用有效 Key 的 Provider，优先借用有效 Provider 凭据
+        # 3.4 若用户仅传入了通用厂商名 (如 "deepseek" 或 "gemini")，智能映射为该提供方配置的首选模型
+        if matched_provider:
+            p_models = matched_provider.get("models", [])
+            p_name = matched_provider.get("name", "").strip().lower()
+            if target_model_clean.lower() == p_name or target_model_clean.lower() in ("deepseek", "gemini", "openai", "claude"):
+                if desktop_model and desktop_model in p_models:
+                    target_model = desktop_model
+                elif p_models:
+                    target_model = p_models[0]
+
+        # 3.5 若未匹配到且未显式指定 model，尝试匹配 desktop_model 所属提供方
+        if not matched_provider and desktop_model and not model:
+            for p in providers:
+                p_key = p.get("api_key", "").strip()
+                if not p_key:
+                    continue
+                p_models_lower = [m.strip().lower() for m in p.get("models", [])]
+                if desktop_model.strip().lower() in p_models_lower:
+                    matched_provider = p
+                    target_model = desktop_model
+                    break
+
+        # 3.6 兜底回退：若所有匹配均未命中且没有环境变量 key，借用首个有效 Provider
         if not matched_provider and not env_key:
             for p in providers:
                 p_key = p.get("api_key", "").strip()
