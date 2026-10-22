@@ -99,21 +99,50 @@ def build_system_prompt(base_prompt: Optional[str] = None, global_memory: Option
     except Exception:
         pass
 
-    # 3. 注入 Plan 模式专项规划准则 (对标 Claude Code Plan 模式)
+    # 3. 动态注入当前 4 阶执行模式准则 (Auto / Edit-Auto / Plan / Manual)
     try:
         from tools.framework.policies import default_policy
-        if getattr(default_policy, "mode", "auto") == "plan":
-            plan_prompt = (
+        cur_mode = default_policy.normalize_mode(getattr(default_policy, "mode", "auto"))
+        if cur_mode == "plan":
+            mode_prompt = (
                 "### 【当前执行模式：Plan 规划模式 (先谋后动 / 方案先行)】\n"
-                "- **核心定位**：对标 Claude Code 计划模式，像资深架构师一样深入调研，先制定完整施工方案，待用户批准后才动手！\n"
+                "- **核心定位**：对标 Claude Code Plan 模式，像资深架构师一样深入调研，先制定完整施工方案，待用户批准后才动手！\n"
                 "- **严格行为准则**：\n"
-                "  1. 【日常寒暄与闲聊免打扰】：若用户仅发送日常问候（如“你好”、“在吗”）、自我介绍或简单闲聊，严禁触发施工方案，直接自然友好应答即可；\n"
-                "  2. 【严禁写操作与环境变更】：严禁调用 write_file、apply_patch 新建或修改文件，严禁执行有写副作用、安装依赖或修改环境的 Shell 命令；\n"
-                "  3. 【充分调研代码】：利用 read_file、list_dir、file_search、grep_search 等只读工具充分分析现有代码逻辑、关联模块及调用链路；\n"
-                "  4. 【结构化施工方案输出】：调研完成后，输出一份结构清晰、条理分明的【实施方案】（包含目标根因、涉及文件、分步计划、风险与回滚、验证策略）；\n"
-                "  5. 【循环内交互审批】：方案陈述完毕后，若需开始落地施工，请在当前执行流中直接调用内置工具 `ask_user` 向用户发起交互决策（选项包含：'批准并以 Auto 模式执行'、'以 Edit 模式执行'、'继续调整方案'）。用户批准后系统将即时切换模式放行，你便可无缝在当前思考链路中继续执行修改与验证，绝不需要用户单独发送下一轮对话！"
+                "  1. 【严禁写操作与环境变更】：严禁调用 write_file、apply_patch 新建或修改文件，严禁执行有写副作用、安装依赖或修改环境的 Shell 命令；\n"
+                "  2. 【充分调研代码】：利用 read_file、list_dir、file_search、grep_search 等只读工具充分分析现有代码逻辑、关联模块及调用链路；\n"
+                "  3. 【结构化施工方案输出】：调研完成后，输出一份结构清晰、条理分明的【实施方案】（包含目标根因、涉及文件、分步计划、风险与回滚、验证策略）；\n"
+                "  4. 【循环内交互审批】：方案陈述完毕后，若需开始落地施工，请在当前执行流中直接调用内置工具 `ask_user` 向用户发起交互决策（选项包含：'批准并以 Auto 模式执行'、'以 Edit 模式执行'、'继续调整方案'）。用户批准后系统将即时切换模式放行；\n"
+                "  5. 【纯粹自然回复，严禁宣告模式】：日常问候或普通交流直接自然友好应答（严禁触发施工方案）；严禁在回复中主动输出“当前处于 Plan 模式”等任何说明文本，保持回答自然专业。"
             )
-            parts.append(plan_prompt)
+            parts.append(mode_prompt)
+        elif cur_mode in ("edit_auto", "edit_automatically"):
+            mode_prompt = (
+                "### 【当前执行模式：Edit automatically 自动编辑模式 (快速实施)】\n"
+                "- **核心定位**：适合目标明确、快速修改代码与重构实施。直接改代码无需繁琐审批，非白名单终端命令须经安全审批。\n"
+                "- **行为准则**：\n"
+                "  1. 【快速改代码】：可直接调用 write_file、apply_patch 进行代码修改与编写，无需等待方案审批；\n"
+                "  2. 【命令受控】：终端只读/测试命令（git status、pytest、npm test）自动放行，其余命令系统会请求用户确认；\n"
+                "  3. 【纯粹自然回复，严禁宣告模式】：日常问候自然友好应答，严禁在正文中主动输出“当前处于 Edit 模式”等硬编码说明。"
+            )
+            parts.append(mode_prompt)
+        elif cur_mode in ("manual", "always_ask"):
+            mode_prompt = (
+                "### 【当前执行模式：Manual 模式 (步步为营 / 单步审批)】\n"
+                "- **核心定位**：最高安全级别，步步为营。所有写文件和终端命令均须经过开发者逐次确认。\n"
+                "- **行为准则**：\n"
+                "  1. 【步步审批】：每次调用写文件或执行 Shell 命令，系统都将弹窗请求用户审批；\n"
+                "  2. 【纯粹自然回复，严禁宣告模式】：日常问候自然友好应答，严禁在正文中主动输出“当前处于 Manual 模式”等硬编码说明。"
+            )
+            parts.append(mode_prompt)
+        else:
+            mode_prompt = (
+                "### 【当前执行模式：Auto 模式 (自主执行 / 效率与安全兼顾)】\n"
+                "- **核心定位**：日常开发推荐的默认模式。全自主端到端推进任务，安全修改不打扰，危险操作才提示。\n"
+                "- **行为准则**：\n"
+                "  1. 【无需方案审批，直接行动】：当前处于 Auto 模式（严禁停下索要方案批准），接到任务直接使用工具落地实施并验证；\n"
+                "  2. 【纯粹自然回复，严禁宣告模式】：日常问候自然友好应答；绝对严禁在回复正文中主动向用户输出“当前处于 Auto 自主执行模式”、“随时可以为你处理...”等任何硬编码模式说明文本，保持回答自然专业，专注解决问题。"
+            )
+            parts.append(mode_prompt)
     except Exception:
         pass
 

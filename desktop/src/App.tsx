@@ -105,6 +105,8 @@ export const App: React.FC = () => {
   const [runningSessions, setRunningSessions] = useState<Record<string, boolean>>({});
   const [draftPrompt, setDraftPrompt] = useState("");
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [activeTurnId, setActiveTurnId] = useState<number | null>(null);
+  const scrollSpyRafRef = useRef<number | null>(null);
 
   // 当前激活会话的复合键与派生状态 (优先就绪，消除 TDZ)
   const currentSessionKey = getSessionKey(projectName, activeSessionId);
@@ -117,6 +119,19 @@ export const App: React.FC = () => {
   const currentTerminalOutputs = sessionTerminalOutputsMap[currentSessionKey] || {};
 
   const turns = sessionTurnsMap[currentSessionKey] || [];
+
+  useEffect(() => {
+    if (turns.length > 0) {
+      setActiveTurnId((prev) => {
+        if (prev === null || !turns.some((t) => t.turn_id === prev)) {
+          return turns[turns.length - 1].turn_id;
+        }
+        return prev;
+      });
+    } else {
+      setActiveTurnId(null);
+    }
+  }, [turns]);
   const actions = sessionActionsMap[currentSessionKey] || [];
   const thoughtText = sessionThoughtMap[currentSessionKey] || "";
   const isCurrentSessionLoading = Boolean(runningSessions[currentSessionKey]);
@@ -215,6 +230,7 @@ export const App: React.FC = () => {
 
   // 轮次尺点击定位平滑跳转
   const handleScrollToTurn = (turnId: number) => {
+    setActiveTurnId(turnId);
     const el = document.getElementById(`turn-user-${turnId}`) || document.getElementById(`turn-container-${turnId}`);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1080,6 +1096,45 @@ export const App: React.FC = () => {
     const atBottom = distanceFromBottom <= 40;
     isAtBottomRef.current = atBottom;
     setShowScrollBottom(!atBottom);
+
+    // 动态计算视口当前聚焦的主导轮次 (Turn Ruler 实时高亮跟踪)
+    if (scrollSpyRafRef.current === null && turns.length > 0) {
+      scrollSpyRafRef.current = requestAnimationFrame(() => {
+        scrollSpyRafRef.current = null;
+        if (!chatContainerRef.current) return;
+        const container = chatContainerRef.current;
+        const cRect = container.getBoundingClientRect();
+        const targetY = cRect.top + Math.min(220, cRect.height * 0.35);
+
+        if (container.scrollHeight - container.scrollTop - container.clientHeight <= 50) {
+          setActiveTurnId(turns[turns.length - 1].turn_id);
+          return;
+        }
+        if (container.scrollTop <= 20) {
+          setActiveTurnId(turns[0].turn_id);
+          return;
+        }
+
+        let foundId = null;
+        for (const t of turns) {
+          const tEl = document.getElementById(`turn-container-${t.turn_id}`);
+          if (tEl) {
+            const rect = tEl.getBoundingClientRect();
+            if (rect.top <= targetY && rect.bottom >= targetY) {
+              foundId = t.turn_id;
+              break;
+            }
+            if (rect.top > targetY && foundId === null) {
+              foundId = t.turn_id;
+              break;
+            }
+          }
+        }
+        if (foundId !== null) {
+          setActiveTurnId(foundId);
+        }
+      });
+    }
   };
 
   // 切换会话或轮次加载完成时：
@@ -2149,7 +2204,7 @@ export const App: React.FC = () => {
         {/* 对话轮次记录导航尺 (贴近左侧边栏，垂直居中固定，绝对不随页面滚动，完全避免与 super 头像重叠) */}
         {isCurrentChatStarted && activeTab === "chat" && turns.length > 0 && (
           <div className="absolute left-2.5 top-1/2 -translate-y-1/2 z-30 pointer-events-auto">
-            <TurnRuler turns={turns} onScrollToTurn={handleScrollToTurn} />
+            <TurnRuler turns={turns} activeTurnId={activeTurnId} onScrollToTurn={handleScrollToTurn} />
           </div>
         )}
 

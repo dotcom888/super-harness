@@ -248,6 +248,20 @@ class TestServerAPI(unittest.TestCase):
             import shutil
             shutil.rmtree(proj_dir, ignore_errors=True)
 
+    def test_fetch_remote_models_endpoint(self):
+        # 1. 验证空参数时返回 400
+        resp = self.client.post("/api/models/fetch-remote", json={"base_url": "", "api_key": ""})
+        self.assertEqual(resp.status_code, 400)
+
+        # 2. 验证伪造不可达地址时返回 success: False
+        resp2 = self.client.post("/api/models/fetch-remote", json={
+            "base_url": "http://127.0.0.1:54321/v1",
+            "api_key": "sk-invalid",
+            "protocol": "openai_chat"
+        })
+        self.assertEqual(resp2.status_code, 200)
+        self.assertFalse(resp2.json().get("success"))
+
 if __name__ == "__main__":
     unittest.main()
 

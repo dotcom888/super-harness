@@ -22,6 +22,8 @@ from core.session import SessionManager
 from tools.framework.policies import default_policy, PolicyDecision
 from tools.executor import ToolExecutor, default_executor
 from tools.builtin.interaction_tools import set_user_interaction_handler
+from skills import default_skill_manager
+from context.global_memory import default_global_memory
 
 logger = logging.getLogger("server.agent_bridge")
 
@@ -369,14 +371,24 @@ class AgentBridge:
             elif norm_mode in ("manual", "plan"):
                 default_policy.session_approved = False
 
-        def wrapped_callback(ev: Dict[str, Any]):
-            ev.setdefault("session_id", active_sid)
-            ev.setdefault("project", cur_proj)
-            event_callback(ev)
-
         # 1. 拦截并即时响应快捷指令 (避免 /clear 等命令被送入 LLM 产生幻觉与长时间挂起)
         raw_cmd = prompt.strip()
         cmd_lower = raw_cmd.lower()
+
+        def record_slash_turn(prompt_text: str, reply_text: str):
+            try:
+                if cur_agent and hasattr(cur_agent, "context_manager") and cur_agent.context_manager:
+                    cm = cur_agent.context_manager
+                    cm.start_new_turn(
+                        prompt_text,
+                        attachments=attachments,
+                        llm_content=prompt_text,
+                        permission_mode=getattr(default_policy, "mode", "auto")
+                    )
+                    cm.add_assistant_message(reply_text)
+                    cm.finish_current_turn(elapsed=0.1)
+            except Exception as e:
+                logger.error(f"Failed to persist slash command turn to disk: {e}")
 
         if cmd_lower in ("/clear", "/reset", "/new"):
             # 清空当前会话的上下文与内存记录
@@ -433,6 +445,7 @@ class AgentBridge:
                 "- `/help` : **指令手册** - 显示本快捷指令清单\n"
                 "\n直接输入指令即可快速执行，亦可在指令后追加具体文件路径或说明！"
             )
+            record_slash_turn(prompt, help_text)
             wrapped_callback({
                 "event": "assistant_response",
                 "content": help_text,
@@ -462,6 +475,7 @@ class AgentBridge:
                 if modified:
                     status_text += "（" + ", ".join(str(x) for x in modified[:5]) + "）"
                 status_text += "\n"
+            record_slash_turn(prompt, status_text)
             wrapped_callback({
                 "event": "assistant_response",
                 "content": status_text,
@@ -478,6 +492,7 @@ class AgentBridge:
                 resp = f"【记忆压缩完成】已成功对历史对话进行语义压缩与长程摘要。\n\n当前总结概览：\n{summary}"
             except Exception:
                 resp = "【记忆压缩完成】当前历史上下文已优化整理，释放了上下文预算。"
+            record_slash_turn(prompt, resp)
             wrapped_callback({
                 "event": "assistant_response",
                 "content": resp,
@@ -487,7 +502,6 @@ class AgentBridge:
 
         elif cmd_lower == "/skills":
             try:
-                from skills import default_skill_manager
                 skills = default_skill_manager.list_skills()
                 if skills:
                     lines = [f"### 🧩 已挂载技能库（共 {len(skills)} 个）", ""]
@@ -501,6 +515,7 @@ class AgentBridge:
                     resp = "### 🧩 技能库\n\n当前未检测到已挂载的 Skills，请检查 `skills/` 目录或通过插件市场安装。"
             except Exception as err:
                 resp = f"⚠️ 读取技能库失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -508,7 +523,6 @@ class AgentBridge:
             parts = raw_cmd.split(None, 1)
             target = parts[1].strip() if len(parts) > 1 else ""
             try:
-                from skills import default_skill_manager
                 if not target:
                     rows = [
                         f"- **{s.name}** · `{s.source_scope}` — "
@@ -528,6 +542,7 @@ class AgentBridge:
                         resp = f"### 🧩 技能：{skill.name}\n\n**来源**：`{skill.source_scope}`\n\n{body}"
             except Exception as err:
                 resp = f"⚠️ 读取技能详情失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -564,12 +579,12 @@ class AgentBridge:
                 resp = "\n".join(lines)
             except Exception as err:
                 resp = f"⚠️ 读取 MCP 状态失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
         elif cmd_lower == "/workspace":
             try:
-                from tools.framework.workspace import default_workspace
                 resp = (
                     "### 📁 工作区信息\n\n"
                     f"- **当前项目**：`{cur_proj}`\n"
@@ -580,15 +595,16 @@ class AgentBridge:
                 )
             except Exception as err:
                 resp = f"⚠️ 读取工作区信息失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
         elif cmd_lower == "/profile":
             try:
-                from context.global_memory import default_global_memory
                 resp = "### 👤 全局开发画像\n\n```text\n" + default_global_memory.format_profile_view().strip() + "\n```"
             except Exception as err:
                 resp = f"⚠️ 读取全局画像失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -599,7 +615,6 @@ class AgentBridge:
                 resp = "用法：`/remember <偏好或编码规范>`\n\n例如：`/remember 优先使用 TypeScript 并保持严格类型`"
             else:
                 try:
-                    from context.global_memory import default_global_memory
                     added = default_global_memory.add_habit(habit)
                     resp = (
                         f"✅ 已将偏好写入全局记忆：\n\n> {habit}\n\n该规范将在所有工程与会话中持续生效。"
@@ -607,6 +622,7 @@ class AgentBridge:
                     )
                 except Exception as err:
                     resp = f"⚠️ 写入全局记忆失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -617,7 +633,6 @@ class AgentBridge:
                 resp = "用法：`/forget <关键字>`，输入 `/profile` 查看当前已登记的偏好。"
             else:
                 try:
-                    from context.global_memory import default_global_memory
                     removed = default_global_memory.remove_habit(keyword)
                     if removed:
                         resp = "✅ 已从全局记忆中移除：\n\n" + "\n".join(f"- {r}" for r in removed)
@@ -625,6 +640,7 @@ class AgentBridge:
                         resp = f"ℹ️ 未找到包含 `{keyword}` 的全局偏好。"
                 except Exception as err:
                     resp = f"⚠️ 移除全局记忆失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -656,6 +672,7 @@ class AgentBridge:
                 resp = "\n".join(lines)
             except Exception as err:
                 resp = f"⚠️ 读取会话历史失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -699,12 +716,82 @@ class AgentBridge:
                             resp = "⚠️ 撤销失败：未能回滚上一轮对话。"
             except Exception as err:
                 resp = f"⚠️ 撤销失败：{err}"
+            record_slash_turn(prompt, resp)
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower == "/context":
+            try:
+                cm = getattr(cur_agent, "context_manager", None)
+                if cm:
+                    usage = cm.get_budget_usage() if hasattr(cm, "get_budget_usage") else {}
+                    turns_count = getattr(cm, "turn_count", 0)
+                    resp = (
+                        "### 🧠 上下文窗口与记忆状态\n\n"
+                        f"- **累计交互轮次**：{turns_count} 轮\n"
+                        f"- **当前总 Token 用量**：{usage.get('total_tokens', 'N/A')}\n"
+                        f"- **系统提示词开销**：{usage.get('system_tokens', 'N/A')}\n"
+                        f"- **短期工作记忆项**：{len(getattr(getattr(cm, 'working_memory', None), 'modified_files', []) or [])} 个修改文件\n"
+                        f"- **注意力预算水位**：{usage.get('budget_percent', 0):.1f}%\n"
+                    )
+                else:
+                    resp = "ℹ️ 当前会话上下文管理器尚未初始化。"
+            except Exception as err:
+                resp = f"⚠️ 读取上下文信息失败：{err}"
+            record_slash_turn(prompt, resp)
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower in ("/plan", "/auto", "/edit", "/manual", "/edit_auto"):
+            mode_map = {
+                "/plan": ("plan", "Plan 模式（方案先行）", "方案先行，智能体先深入调研并输出完整施工方案，待确认后再落地施工。"),
+                "/auto": ("auto", "Auto 模式（自主执行）", "全自动执行，快速推进无需繁琐确认。"),
+                "/edit": ("edit_auto", "Edit-Auto 模式（审查模式）", "安全审查模式，仅自主修改代码与执行只读命令。"),
+                "/edit_auto": ("edit_auto", "Edit-Auto 模式（审查模式）", "安全审查模式，仅自主修改代码与执行只读命令。"),
+                "/manual": ("manual", "Manual 模式（单步确认）", "单步人工确认模式，高危与文件改动需人工审批。")
+            }
+            target_mode, mode_title, mode_desc = mode_map[cmd_lower]
+            default_policy.mode = target_mode
+            resp = f"✅ 已成功切换至 **{mode_title}**。\n\n> {mode_desc}"
+            record_slash_turn(prompt, resp)
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower.startswith("/doctor"):
+            try:
+                import sys
+                import platform
+                ws_exists = target_ws_dir.exists()
+                git_dir = target_ws_dir / ".git"
+                resp = (
+                    "### 🩺 super 智能体系统与依赖自检报告\n\n"
+                    f"- **Python 版本**：`{sys.version.split()[0]}` ({platform.system()} {platform.machine()})\n"
+                    f"- **当前工作区**：`{cur_proj}` (`{target_ws_dir}` - {'✅ 存在' if ws_exists else '❌ 不存在'})\n"
+                    f"- **Git 版本库**：{'✅ 已初始化' if git_dir.exists() else 'ℹ️ 未初始化 Git'}\n"
+                    f"- **策略安全模式**：`{getattr(default_policy, 'mode', 'auto')}`\n"
+                    f"- **MCP 扩展状态**：{len(getattr(getattr(cur_agent, 'mcp_manager', None), 'clients', {}) or {})} 个在线服务\n"
+                    f"- **Skills 技能库**：{len(default_skill_manager.list_skills())} 个已挂载技能\n\n"
+                    "🎉 核心系统与运行环境运行正常！"
+                )
+            except Exception as err:
+                resp = f"⚠️ 自检执行失败：{err}"
+            record_slash_turn(prompt, resp)
+            wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
+            return resp
+
+        elif cmd_lower.startswith("/version"):
+            resp = (
+                "### 🚀 super 桌面智能体版本\n\n"
+                "- **客户端版本**：`v5.7.16`\n"
+                "- **后端协议**：双轨真实思维链（Thinking + Action）流式驱动\n"
+                "- **架构设计**：Super Harness + Desktop GUI\n"
+            )
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
         elif cmd_lower == "/projects":
             try:
-                from context.global_memory import default_global_memory
                 projs = default_global_memory.list_projects()
                 lines = [f"### 🗺️ 已登记工程工作区（{len(projs)} 个）", ""]
                 for proj in projs[:40]:
@@ -717,6 +804,7 @@ class AgentBridge:
                 resp = "\n".join(lines)
             except Exception as err:
                 resp = f"⚠️ 读取工程地图失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -735,6 +823,7 @@ class AgentBridge:
                 resp = "\n".join(lines)
             except Exception as err:
                 resp = f"⚠️ 读取会话列表失败：{err}"
+            record_slash_turn(prompt, resp)
             wrapped_callback({"event": "assistant_response", "content": resp, "timestamp": time.time()})
             return resp
 
@@ -745,8 +834,9 @@ class AgentBridge:
             prompt = f"请对当前工作区的代码实现与核心逻辑进行走查审查，重点关注代码规范、潜在 Bug 与安全隐患。{raw_cmd[7:].strip()}"
         elif cmd_lower.startswith("/test"):
             prompt = f"请检查并运行本地自动化测试（例如 pytest 或 npm test），分析测试输出并定位所有未通过用例。{raw_cmd[5:].strip()}"
-        elif cmd_lower.startswith("/fix"):
-            prompt = f"请根据最近的报错日志或异常信息进行根因分析，并提供针对性的代码修复方案与补丁验证。{raw_cmd[4:].strip()}"
+        elif cmd_lower.startswith("/fix") or cmd_lower.startswith("/bug"):
+            target_text = raw_cmd[4:].strip() if cmd_lower.startswith("/fix") else raw_cmd[4:].strip()
+            prompt = f"请根据最近的报错日志或异常信息进行根因分析，并提供针对性的代码修复方案与补丁验证。{target_text}"
         elif cmd_lower.startswith("/explain"):
             prompt = f"请详细解析当前项目的核心模块运作机制、调用链与业务流程。{raw_cmd[8:].strip()}"
 
@@ -1003,13 +1093,26 @@ class AgentBridge:
                 else:
                     err_text = f"❌ 模型通信异常: {str(run_err)}\n\n💡 提示: 上游网络连接或模型服务响应超时，请检查网络通畅度或稍后重试。"
 
-                # 确保磁盘历史安全闭环，绝对不留悬挂未闭合的孤儿 turn
+                # 确保磁盘历史安全闭环，绝对不留悬挂未闭合的孤儿 turn，并永久保留真实的用户原始提问
                 try:
                     if cur_agent and hasattr(cur_agent, "context_manager") and cur_agent.context_manager:
-                        cur_agent.context_manager.add_assistant_message(err_text)
-                        cur_agent.context_manager.finish_current_turn(elapsed=elapsed_total)
-                except Exception:
-                    pass
+                        cm = cur_agent.context_manager
+                        if cm.current_turn is None:
+                            cm.start_new_turn(
+                                prompt,
+                                attachments=attachments,
+                                llm_content=prompt,
+                                permission_mode=getattr(default_policy, "mode", "auto")
+                            )
+                        elif not getattr(cm.current_turn, "user_content", ""):
+                            cm.current_turn.user_content = prompt
+                            for m in getattr(cm.current_turn, "messages", []):
+                                if m.get("role") == "user" and not m.get("content"):
+                                    m["content"] = prompt
+                        cm.add_assistant_message(err_text)
+                        cm.finish_current_turn(elapsed=elapsed_total)
+                except Exception as rec_err:
+                    logger.error(f"Failed to record error turn in context_manager: {rec_err}")
 
                 wrapped_callback({
                     "event": "assistant_response",

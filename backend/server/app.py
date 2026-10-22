@@ -590,7 +590,15 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
                 wm = data.get("working_memory", {})
                 working_memory_last = wm
                 if wm.get("current_goal") and not turns_map[tid]["user_prompt"]:
-                    turns_map[tid]["user_prompt"] = wm.get("current_goal")
+                    candidate_goal = str(wm.get("current_goal", "")).strip()
+                    is_inherited_goal = False
+                    for prev_tid in range(1, tid):
+                        if prev_tid in turns_map and (turns_map[prev_tid].get("user_prompt", "").strip() == candidate_goal):
+                            is_inherited_goal = True
+                            break
+                    # 仅在非前序轮次继承的历史目标、且当前轮确为首轮无独立提问时才兜底回填，杜绝跨轮次污染
+                    if not is_inherited_goal and tid == 1:
+                        turns_map[tid]["user_prompt"] = candidate_goal
 
     # 计算并写入该轮真实的发送至回答完成时间
     file_mtime = target_file.stat().st_mtime if target_file.exists() else 0
@@ -795,6 +803,88 @@ def test_provider_connection(req: ModelTestRequest):
     except Exception as e:
         logger.warning(f"Model test connection failed: {e}")
         return {"success": False, "error": str(e)}
+
+class ModelFetchRemoteRequest(BaseModel):
+    base_url: str
+    api_key: str
+    protocol: Optional[str] = "openai_chat"
+
+@app.post("/api/models/fetch-remote")
+def fetch_remote_models(req: ModelFetchRemoteRequest):
+    """通过 Provider 的 Base URL 与 API Key 向远端拉取其可用的模型列表"""
+    url = clean_base_url(req.base_url, getattr(req, "protocol", "openai_chat") or "openai_chat")
+    key = req.api_key.strip()
+    proto = getattr(req, "protocol", "openai_chat") or "openai_chat"
+
+    if not url or not key:
+        raise HTTPException(status_code=400, detail="接口地址和 API 密钥不能为空")
+
+    try:
+        models = []
+        if proto == "gemini_v1beta" or "generativelanguage.googleapis.com" in url:
+            import urllib.request, json
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+            req_gemini = urllib.request.Request(gemini_url, headers={"User-Agent": "super-harness/5.7"})
+            with urllib.request.urlopen(req_gemini, timeout=8.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("models", []):
+                    name = item.get("name", "")
+                    if name.startswith("models/"):
+                        name = name[len("models/"):]
+                    if name and "embedding" not in name.lower() and "aqa" not in name.lower():
+                        models.append(name)
+        elif proto == "anthropic_messages" or "api.anthropic.com" in url:
+            import urllib.request, json
+            anthropic_url = "https://api.anthropic.com/v1/models"
+            req_anthropic = urllib.request.Request(
+                anthropic_url,
+                headers={
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                    "User-Agent": "super-harness/5.7"
+                }
+            )
+            with urllib.request.urlopen(req_anthropic, timeout=8.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("data", []):
+                    mid = item.get("id")
+                    if mid:
+                        models.append(mid)
+        else:
+            from openai import OpenAI
+            client = OpenAI(api_key=key, base_url=url, timeout=8.0, max_retries=0)
+            res = client.models.list()
+            raw_models = getattr(res, "data", []) or []
+            for item in raw_models:
+                mid = getattr(item, "id", None) or (item.get("id") if isinstance(item, dict) else str(item))
+                if mid and isinstance(mid, str):
+                    mid_lower = mid.lower()
+                    if not any(sub in mid_lower for sub in ["embedding", "tts", "whisper", "dall-e", "rerank", "moderation"]):
+                        models.append(mid)
+            if not models and raw_models:
+                models = [getattr(m, "id", str(m)) for m in raw_models]
+
+        seen = set()
+        deduped = []
+        for m in models:
+            if m not in seen:
+                seen.add(m)
+                deduped.append(m)
+
+        if not deduped:
+            return {"success": False, "error": "服务端未返回任何模型标识，请手动填写。"}
+
+        return {"success": True, "models": deduped}
+    except Exception as e:
+        logger.warning(f"Fetch remote models failed: {e}")
+        err_msg = str(e)
+        if "401" in err_msg or "unauthorized" in err_msg.lower():
+            err_msg = "鉴权失败 (401 Unauthorized): API Key 无效或未授权。"
+        elif "404" in err_msg or "not found" in err_msg.lower():
+            err_msg = "接口不存在 (404 Not Found): 该服务端未提供 /models 列表接口，请手动填写模型标识。"
+        elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+            err_msg = "请求超时 (Timeout): 目标服务器连接超时，请检查网络或代理。"
+        return {"success": False, "error": err_msg}
 
 @app.post("/api/models/switch")
 def switch_model(req: ModelSwitchRequest):

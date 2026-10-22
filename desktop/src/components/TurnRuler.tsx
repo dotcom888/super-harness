@@ -4,9 +4,10 @@ import { TurnData } from "../types";
 interface TurnRulerProps {
   turns: TurnData[];
   onScrollToTurn: (turnId: number) => void;
+  activeTurnId?: number | null;
 }
 
-export const TurnRuler: React.FC<TurnRulerProps> = ({ turns, onScrollToTurn }) => {
+export const TurnRuler: React.FC<TurnRulerProps> = ({ turns, onScrollToTurn, activeTurnId }) => {
   const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
 
   if (!turns || turns.length === 0) return null;
@@ -15,6 +16,7 @@ export const TurnRuler: React.FC<TurnRulerProps> = ({ turns, onScrollToTurn }) =
     <div className="flex flex-col items-center gap-1.5 py-3 select-none pointer-events-auto">
       {turns.map((turn, index) => {
         const isHovered = hoveredTurnIndex === index;
+        const isActive = activeTurnId === turn.turn_id;
         const turnTitle = turn.user_prompt
           ? turn.user_prompt.trim().replace(/\n+/g, " ")
           : (turn.attachments && turn.attachments.length > 0 ? `[附件] ${turn.attachments[0].name}` : "会话轮次");
@@ -43,10 +45,17 @@ export const TurnRuler: React.FC<TurnRulerProps> = ({ turns, onScrollToTurn }) =
             onMouseLeave={() => setHoveredTurnIndex(null)}
             onClick={() => onScrollToTurn(turn.turn_id ?? index)}
           >
-            {/* 刻度短横线 (对标图二：鼠标悬停伸长高亮，点击滑动至气泡) */}
+            {/* 当前视口所在的激活轮次指示微光点 */}
+            {isActive && !isHovered && (
+              <span className="absolute -left-1.5 w-1 h-1 rounded-full bg-blue-500/80 dark:bg-blue-400/80 animate-pulse" />
+            )}
+
+            {/* 刻度短横线 (跟随视口滚动跟踪高亮，鼠标悬停伸长高亮，点击平滑滚动至该轮气泡) */}
             <div
-              className={`h-0.5 rounded-full transition-all duration-150 ${
-                isHovered
+              className={`h-0.5 rounded-full transition-all duration-200 ${
+                isActive
+                  ? "w-5.5 bg-blue-500 dark:bg-blue-400 shadow-[0_0_3px_rgba(59,130,246,0.25)]"
+                  : isHovered
                   ? "w-5 bg-gray-900 dark:bg-white shadow-xs"
                   : "w-3 bg-gray-300 dark:bg-gray-600 group-hover:w-4.5 group-hover:bg-gray-700 dark:group-hover:bg-gray-300"
               }`}

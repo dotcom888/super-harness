@@ -1,6 +1,6 @@
 {
   "name": "super-harness-desktop",
-  "version": "5.7.14",
+  "version": "5.7.16",
   "description": "Super-Harness AI Coding Agent Desktop Client (DeepSeek Harness Edition)",
   "main": "electron/main.cjs",
   "scripts": {

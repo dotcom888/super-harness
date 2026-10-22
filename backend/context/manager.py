@@ -497,9 +497,9 @@ class ContextManager:
         elif not self.working_memory.current_goal and user_content.strip():
             self.working_memory.update_goal(user_content.strip()[:120], is_manual=False)
 
-    def add_assistant_message(self, message: Any):
+    def add_assistant_message(self, message: Any, fallback_user_content: str = ""):
         if not self.current_turn:
-            self.start_new_turn("")
+            self.start_new_turn(fallback_user_content or "（系统请求）")
 
         if isinstance(message, ChatCompletionMessage):
             msg_dict: Dict[str, Any] = {"role": "assistant", "content": message.content or ""}

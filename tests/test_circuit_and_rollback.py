@@ -153,3 +153,57 @@ def test_session_rollback_api(tmp_path):
     # 清理
     if hist_file.exists():
         hist_file.unlink()
+
+
+@pytest.mark.anyio
+async def test_slash_commands_and_turn_persistence(tmp_path):
+    from tools.framework.policies import default_policy
+    orig_mode = getattr(default_policy, "mode", "auto")
+    try:
+        events = []
+        def callback(ev):
+            events.append(ev)
+
+        sid = f"test_slash_{int(time.time()*1000)}"
+        resp_help = await bridge.execute_prompt_stream(
+            prompt="/help",
+            event_callback=callback,
+            session_id=sid,
+            project_name="_general"
+        )
+        assert "快捷指令" in resp_help
+        assert any(ev.get("event") == "assistant_response" for ev in events)
+
+        resp_ctx = await bridge.execute_prompt_stream(
+            prompt="/context",
+            event_callback=callback,
+            session_id=sid,
+            project_name="_general"
+        )
+        assert "上下文" in resp_ctx
+
+        resp_plan = await bridge.execute_prompt_stream(
+            prompt="/plan",
+            event_callback=callback,
+            session_id=sid,
+            project_name="_general"
+        )
+        assert "Plan 模式" in resp_plan
+
+        resp_doc = await bridge.execute_prompt_stream(
+            prompt="/doctor",
+            event_callback=callback,
+            session_id=sid,
+            project_name="_general"
+        )
+        assert "自检报告" in resp_doc
+
+        resp_ver = await bridge.execute_prompt_stream(
+            prompt="/version",
+            event_callback=callback,
+            session_id=sid,
+            project_name="_general"
+        )
+        assert "v5.7.16" in resp_ver
+    finally:
+        default_policy.mode = orig_mode

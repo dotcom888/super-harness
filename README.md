@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-174%20passed-brightgreen.svg)](tests/)
-[![Version](https://img.shields.io/badge/Release-v5.7.14-blue.svg)](https://github.com/dotcom888/super-harness/releases)
+[![Version](https://img.shields.io/badge/Release-v5.7.16-blue.svg)](https://github.com/dotcom888/super-harness/releases)
 [![Context](https://img.shields.io/badge/Context-200K%20Budget%20Engine-orange.svg)](#3--200k-刚性分账上下文工程与三段式滑窗)
 [![Protocol](https://img.shields.io/badge/MCP-JSON--RPC%202.0%20(0%20Ports)-blue.svg)](#6--mcp-model-context-protocol-外部分布式扩展)
 
@@ -174,8 +174,8 @@ pytest
 
 👉 **[前往 GitHub Releases 最新版本下载](https://github.com/dotcom888/super-harness/releases)**
 
-- **Windows 一键安装向导**：`super.harness.Setup.5.7.14.exe`
-- **Windows 免安装绿色版**：`super.harness-5.7.14-win.zip`
+- **Windows 一键安装向导**：`super.harness.Setup.5.7.16.exe`
+- **Windows 免安装绿色版**：`super.harness-5.7.16-win.zip`
 
 ---
 

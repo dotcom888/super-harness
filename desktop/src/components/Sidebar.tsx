@@ -1,3 +1,5 @@
+import { ModalTransition } from "./ModalTransition";
+import { DropdownTransition } from "./DropdownTransition";
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Folder, 
@@ -138,15 +140,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [expandedMoreProjects, setExpandedMoreProjects] = useState<Record<string, boolean>>({});
 
-  // 操作菜单弹出层状态
+  // 操作菜单弹出层状态与退场快照
   const [activeProjectMenu, setActiveProjectMenu] = useState<{ name: string; x: number; y: number } | null>(null);
   const [activeSessionMenu, setActiveSessionMenu] = useState<{ project: string; sid: string; x: number; y: number } | null>(null);
+  const [projectMenuSnapshot, setProjectMenuSnapshot] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [sessionMenuSnapshot, setSessionMenuSnapshot] = useState<{ project: string; sid: string; x: number; y: number } | null>(null);
 
-  // 编辑项目工作区弹窗
+  // 编辑项目工作区弹窗与退场快照
   const [editingProject, setEditingProject] = useState<{ oldName: string; newName: string; path: string } | null>(null);
+  const [editingProjectSnapshot, setEditingProjectSnapshot] = useState<{ oldName: string; newName: string; path: string } | null>(null);
 
-  // 重命名会话弹窗
+  // 重命名会话弹窗与退场快照
   const [renamingSession, setRenamingSession] = useState<{ project: string; sid: string; title: string } | null>(null);
+  const [renamingSessionSnapshot, setRenamingSessionSnapshot] = useState<{ project: string; sid: string; title: string } | null>(null);
+
+  const openProjectMenu = (menu: { name: string; x: number; y: number }) => {
+    setActiveProjectMenu(menu);
+    setProjectMenuSnapshot(menu);
+  };
+  const openSessionMenu = (menu: { project: string; sid: string; x: number; y: number }) => {
+    setActiveSessionMenu(menu);
+    setSessionMenuSnapshot(menu);
+  };
+  const openEditProject = (val: { oldName: string; newName: string; path: string }) => {
+    setEditingProject(val);
+    setEditingProjectSnapshot(val);
+  };
+  const openRenameSession = (val: { project: string; sid: string; title: string }) => {
+    setRenamingSession(val);
+    setRenamingSessionSnapshot(val);
+  };
 
   // 鼠标拖拽排序与移动相关状态 (对标需求 2 & 图二)
   const [isDragging, setIsDragging] = useState(false);
@@ -236,10 +259,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const startX = e.clientX;
     const startY = e.clientY;
 
-    // 120ms 长按判定定时器
+    // 450ms 长按判定定时器 (仅在真正长按时触发拖拽，普通轻击与标准点击绝不阻塞会话选中)
     const timerId = setTimeout(() => {
       startDrag(source, startX, startY);
-    }, 120);
+    }, 450);
 
     dragPendingRef.current = {
       source,
@@ -262,11 +285,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 全局鼠标移动与释放监听 (处理拖拽指示线与位置计算)
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      // 若鼠标按下并移动超过 4px，立即启动拖拽
+      // 若鼠标按下并移动超过 8px，立即启动拖拽
       if (dragPendingRef.current && !isDraggingRef.current) {
         const dx = e.clientX - dragPendingRef.current.startX;
         const dy = e.clientY - dragPendingRef.current.startY;
-        if (dx * dx + dy * dy >= 16) {
+        if (dx * dx + dy * dy >= 64) {
           clearTimeout(dragPendingRef.current.timerId);
           startDrag(dragPendingRef.current.source, e.clientX, e.clientY);
         }
@@ -386,12 +409,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         if (target) {
           executeDrop(source, target);
+          justDroppedRef.current = true;
+          setTimeout(() => {
+            justDroppedRef.current = false;
+          }, 120);
         }
-
-        justDroppedRef.current = true;
-        setTimeout(() => {
-          justDroppedRef.current = false;
-        }, 120);
       }
 
       dragPendingRef.current = null;
@@ -497,7 +519,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
         <div className="flex flex-col items-center gap-2">
-          <button onClick={onOpenPlugins} className="p-2 hover:bg-[#e5e7eb] rounded-lg text-gray-600 transition cursor-pointer" title="插件市场">
+          <button onClick={onOpenPlugins} className="p-2 hover:bg-[#e5e7eb] rounded-lg text-gray-600 transition cursor-pointer" title="插件">
             <Puzzle size={18} />
           </button>
           <button onClick={onOpenSettings} className="p-2 hover:bg-[#e5e7eb] rounded-lg text-gray-600 transition cursor-pointer" title="设置">
@@ -574,7 +596,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
           {isProjectsExpanded && (
-            <div className="space-y-1 pb-2 pl-0.5 max-h-[50vh] overflow-y-auto pr-1 sidebar-scroll-box">
+            <div className="space-y-1 pb-2 pl-0.5">
             {displayProjects.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-gray-400 dark:text-gray-500 flex flex-col items-center gap-2">
                 <FolderPlus size={20} className="text-gray-300 dark:text-gray-600 mb-0.5" />
@@ -620,7 +642,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      setActiveProjectMenu({ name: proj.name, x: e.clientX, y: e.clientY });
+                      openProjectMenu({ name: proj.name, x: e.clientX, y: e.clientY });
                     }}
                     className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition relative border ${
                       isFolderDropTarget
@@ -649,7 +671,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         onClick={(e) => {
                           e.stopPropagation();
                           const rect = e.currentTarget.getBoundingClientRect();
-                          setActiveProjectMenu({ name: proj.name, x: rect.right, y: rect.bottom });
+                          openProjectMenu({ name: proj.name, x: rect.right, y: rect.bottom });
                         }}
                         className="opacity-0 group-hover/proj:opacity-100 hover:bg-gray-300/60 p-0.5 rounded text-gray-500 transition cursor-pointer"
                         title="项目操作"
@@ -702,7 +724,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 }}
                                 onContextMenu={(e) => {
                                   e.preventDefault();
-                                  setActiveSessionMenu({ project: proj.name, sid: s.session_id, x: e.clientX, y: e.clientY });
+                                  openSessionMenu({ project: proj.name, sid: s.session_id, x: e.clientX, y: e.clientY });
                                 }}
                                 className={`group/sess flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition relative border ${
                                   isActive
@@ -728,7 +750,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       const rect = e.currentTarget.getBoundingClientRect();
-                                      setActiveSessionMenu({ project: proj.name, sid: s.session_id, x: rect.right, y: rect.bottom });
+                                      openSessionMenu({ project: proj.name, sid: s.session_id, x: rect.right, y: rect.bottom });
                                     }}
                                     className="opacity-0 group-hover/sess:opacity-100 hover:bg-gray-300/60 p-0.5 rounded text-gray-500 transition cursor-pointer"
                                     title="会话操作"
@@ -851,7 +873,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         }}
                         onContextMenu={(e) => {
                           e.preventDefault();
-                          setActiveSessionMenu({ project: "_general", sid: s.session_id, x: e.clientX, y: e.clientY });
+                          openSessionMenu({ project: "_general", sid: s.session_id, x: e.clientX, y: e.clientY });
                         }}
                         className={`group/recent flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition relative ${
                           isRecentActive
@@ -877,7 +899,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onClick={(e) => {
                               e.stopPropagation();
                               const rect = e.currentTarget.getBoundingClientRect();
-                              setActiveSessionMenu({ project: "_general", sid: s.session_id, x: rect.right, y: rect.bottom });
+                              openSessionMenu({ project: "_general", sid: s.session_id, x: rect.right, y: rect.bottom });
                             }}
                             className="opacity-0 group-hover/recent:opacity-100 hover:bg-gray-300/60 dark:hover:bg-[#282d3e] p-0.5 rounded text-gray-500 transition cursor-pointer"
                             title="会话操作"
@@ -905,7 +927,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-300 hover:bg-[#eceef0] dark:hover:bg-[#181a24] transition-all duration-150 active:scale-[0.98] font-medium cursor-pointer"
         >
           <Puzzle size={16} className="text-gray-500 dark:text-gray-400" />
-          <span>插件市场</span>
+          <span>插件</span>
         </button>
         <button
           onClick={onOpenSettings}
@@ -941,23 +963,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* 1. 项目工作区操作下拉菜单 */}
-      {activeProjectMenu && (
-        <>
-          <div 
-            className="fixed inset-0 z-40 cursor-default" 
-            onClick={() => setActiveProjectMenu(null)} 
-          />
-          <div 
-            style={{ top: Math.min(activeProjectMenu.y, window.innerHeight - 150), left: Math.min(activeProjectMenu.x, window.innerWidth - 180) }}
-            className="fixed z-50 w-44 bg-white dark:bg-[#181a24] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 text-xs select-none animate-in fade-in duration-100 text-gray-700 dark:text-gray-200"
-          >
+      {/* 1. 项目工作区操作下拉菜单 (带 300ms 淡入淡出及缩放过渡) */}
+      <DropdownTransition
+        isOpen={Boolean(activeProjectMenu)}
+        onClose={() => setActiveProjectMenu(null)}
+        zIndex={50}
+        duration={300}
+        origin="top-left"
+        style={projectMenuSnapshot ? {
+          position: "fixed",
+          top: Math.min(projectMenuSnapshot.y, window.innerHeight - 150),
+          left: Math.min(projectMenuSnapshot.x, window.innerWidth - 180)
+        } : undefined}
+        className="w-44 bg-white dark:bg-[#181a24] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 text-xs select-none text-gray-700 dark:text-gray-200"
+      >
+        {projectMenuSnapshot && (
+          <>
             <button
               onClick={() => {
-                const targetP = displayProjects.find((p) => p.name === activeProjectMenu.name);
-                setEditingProject({
-                  oldName: activeProjectMenu.name,
-                  newName: activeProjectMenu.name,
+                const targetP = displayProjects.find((p) => p.name === projectMenuSnapshot.name);
+                openEditProject({
+                  oldName: projectMenuSnapshot.name,
+                  newName: projectMenuSnapshot.name,
                   path: targetP?.path || ""
                 });
                 setActiveProjectMenu(null);
@@ -970,13 +997,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                const targetP = displayProjects.find((p) => p.name === activeProjectMenu.name);
-                if (onPinProject) onPinProject(activeProjectMenu.name, !targetP?.is_pinned);
+                const targetP = displayProjects.find((p) => p.name === projectMenuSnapshot.name);
+                if (onPinProject) onPinProject(projectMenuSnapshot.name, !targetP?.is_pinned);
                 setActiveProjectMenu(null);
               }}
               className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-100 dark:hover:bg-[#222534] text-gray-700 dark:text-gray-200 text-left transition cursor-pointer"
             >
-              {displayProjects.find((p) => p.name === activeProjectMenu.name)?.is_pinned ? (
+              {displayProjects.find((p) => p.name === projectMenuSnapshot.name)?.is_pinned ? (
                 <>
                   <PinOff size={13} className="text-gray-500" />
                   <span>取消置顶</span>
@@ -993,7 +1020,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                if (onDeleteProject) onDeleteProject(activeProjectMenu.name);
+                if (onDeleteProject) onDeleteProject(projectMenuSnapshot.name);
                 setActiveProjectMenu(null);
               }}
               className="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 text-left transition cursor-pointer"
@@ -1001,29 +1028,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Trash2 size={13} />
               <span>删除</span>
             </button>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </DropdownTransition>
 
-      {/* 2. 会话操作下拉菜单 */}
-      {activeSessionMenu && (
-        <>
-          <div 
-            className="fixed inset-0 z-40 cursor-default" 
-            onClick={() => setActiveSessionMenu(null)} 
-          />
-          <div 
-            style={{ top: Math.min(activeSessionMenu.y, window.innerHeight - 150), left: Math.min(activeSessionMenu.x, window.innerWidth - 180) }}
-            className="fixed z-50 w-40 bg-white dark:bg-[#181a24] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 text-xs select-none animate-in fade-in duration-100 text-gray-700 dark:text-gray-200"
-          >
+      {/* 2. 会话操作下拉菜单 (带 300ms 淡入淡出及缩放过渡) */}
+      <DropdownTransition
+        isOpen={Boolean(activeSessionMenu)}
+        onClose={() => setActiveSessionMenu(null)}
+        zIndex={50}
+        duration={300}
+        origin="top-left"
+        style={sessionMenuSnapshot ? {
+          position: "fixed",
+          top: Math.min(sessionMenuSnapshot.y, window.innerHeight - 150),
+          left: Math.min(sessionMenuSnapshot.x, window.innerWidth - 180)
+        } : undefined}
+        className="w-40 bg-white dark:bg-[#181a24] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 text-xs select-none text-gray-700 dark:text-gray-200"
+      >
+        {sessionMenuSnapshot && (
+          <>
             <button
               onClick={() => {
-                const proj = displayProjects.find((p) => p.name === activeSessionMenu.project);
-                const sess = proj?.sessions.find((s) => s.session_id === activeSessionMenu.sid);
-                setRenamingSession({
-                  project: activeSessionMenu.project,
-                  sid: activeSessionMenu.sid,
-                  title: sess?.current_goal || activeSessionMenu.sid
+                const proj = displayProjects.find((p) => p.name === sessionMenuSnapshot.project);
+                const sess = proj?.sessions.find((s) => s.session_id === sessionMenuSnapshot.sid);
+                openRenameSession({
+                  project: sessionMenuSnapshot.project,
+                  sid: sessionMenuSnapshot.sid,
+                  title: sess?.current_goal || sessionMenuSnapshot.sid
                 });
                 setActiveSessionMenu(null);
               }}
@@ -1035,14 +1067,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                const proj = displayProjects.find((p) => p.name === activeSessionMenu.project);
-                const sess = proj?.sessions.find((s) => s.session_id === activeSessionMenu.sid);
-                if (onPinSession) onPinSession(activeSessionMenu.project, activeSessionMenu.sid, !sess?.is_pinned);
+                const proj = displayProjects.find((p) => p.name === sessionMenuSnapshot.project);
+                const sess = proj?.sessions.find((s) => s.session_id === sessionMenuSnapshot.sid);
+                if (onPinSession) onPinSession(sessionMenuSnapshot.project, sessionMenuSnapshot.sid, !sess?.is_pinned);
                 setActiveSessionMenu(null);
               }}
               className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-100 dark:hover:bg-[#222534] text-gray-700 dark:text-gray-200 text-left transition cursor-pointer"
             >
-              {(activeSessionMenu.project === "_general" ? recentSessions : displayProjects.find((p) => p.name === activeSessionMenu.project)?.sessions || []).find((s) => s.session_id === activeSessionMenu.sid)?.is_pinned ? (
+              {(sessionMenuSnapshot.project === "_general" ? recentSessions : displayProjects.find((p) => p.name === sessionMenuSnapshot.project)?.sessions || []).find((s) => s.session_id === sessionMenuSnapshot.sid)?.is_pinned ? (
                 <>
                   <PinOff size={13} className="text-gray-500" />
                   <span>取消置顶</span>
@@ -1059,7 +1091,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             <button
               onClick={() => {
-                if (onDeleteSession) onDeleteSession(activeSessionMenu.project, activeSessionMenu.sid);
+                if (onDeleteSession) onDeleteSession(sessionMenuSnapshot.project, sessionMenuSnapshot.sid);
                 setActiveSessionMenu(null);
               }}
               className="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 text-left transition cursor-pointer"
@@ -1067,17 +1099,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <Trash2 size={13} />
               <span>删除会话</span>
             </button>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </DropdownTransition>
 
-      {/* 3. 编辑项目工作区弹窗 (更改命名与磁盘目录) */}
-      {editingProject && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-96 bg-white dark:bg-[#141620] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#262a38] overflow-hidden p-5 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150 text-gray-800 dark:text-gray-100">
+      {/* 3. 编辑项目工作区弹窗 (更改命名与磁盘目录，300ms 平滑缩放与淡入淡出) */}
+      <ModalTransition
+        isOpen={Boolean(editingProject)}
+        onClose={() => setEditingProject(null)}
+        zIndex={100}
+        duration={300}
+      >
+        {editingProjectSnapshot && (
+          <div className="w-[420px] bg-white dark:bg-[#181a24] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#2a2e3f] overflow-hidden p-5 space-y-4 text-xs text-gray-800 dark:text-gray-100">
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 pb-3">
               <span className="font-bold text-gray-900 dark:text-white text-sm">编辑项目工作区</span>
-              <button onClick={() => setEditingProject(null)} className="text-gray-400 hover:text-gray-700 cursor-pointer">
+              <button onClick={() => setEditingProject(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer">
                 <X size={16} />
               </button>
             </div>
@@ -1086,8 +1123,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <label className="block text-gray-700 dark:text-gray-300 font-medium mb-1">工作区命名</label>
               <input
                 type="text"
-                value={editingProject.newName}
-                onChange={(e) => setEditingProject({ ...editingProject, newName: e.target.value })}
+                value={editingProjectSnapshot.newName}
+                onChange={(e) => {
+                  const updated = { ...editingProjectSnapshot, newName: e.target.value };
+                  setEditingProject(updated);
+                  setEditingProjectSnapshot(updated);
+                }}
                 className="w-full px-3 py-2 bg-white dark:bg-[#1c1f2b] border border-gray-200 dark:border-[#2a2e3f] text-gray-900 dark:text-gray-100 rounded-xl focus:border-blue-500 outline-none"
               />
             </div>
@@ -1097,15 +1138,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex items-center gap-2">
                 <input
                   type="text"
-                  value={editingProject.path}
-                  onChange={(e) => setEditingProject({ ...editingProject, path: e.target.value })}
+                  value={editingProjectSnapshot.path}
+                  onChange={(e) => {
+                    const updated = { ...editingProjectSnapshot, path: e.target.value };
+                    setEditingProject(updated);
+                    setEditingProjectSnapshot(updated);
+                  }}
                   placeholder="本地绝对路径"
                   className="flex-1 px-3 py-2 bg-white dark:bg-[#1c1f2b] border border-gray-200 dark:border-[#2a2e3f] text-gray-900 dark:text-gray-100 rounded-xl focus:border-blue-500 outline-none truncate font-mono text-[11px]"
                 />
                 <button
                   type="button"
                   onClick={handleBrowseDir}
-                  className="p-2 border border-gray-200 hover:bg-gray-100 rounded-xl transition cursor-pointer text-gray-600"
+                  className="p-2 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-[#222534] rounded-xl transition cursor-pointer text-gray-600 dark:text-gray-300"
                   title="浏览选择文件夹"
                 >
                   <FolderOpen size={16} />
@@ -1117,15 +1162,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={() => setEditingProject(null)}
-                className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 rounded-xl transition cursor-pointer text-gray-600"
+                className="px-3.5 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-[#222534] rounded-xl transition cursor-pointer text-gray-600 dark:text-gray-300"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  if (onEditProject) {
-                    onEditProject(editingProject.oldName, editingProject.newName, editingProject.path);
+                  if (onEditProject && editingProjectSnapshot) {
+                    onEditProject(editingProjectSnapshot.oldName, editingProjectSnapshot.newName, editingProjectSnapshot.path);
                   }
                   setEditingProject(null);
                 }}
@@ -1135,16 +1180,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </ModalTransition>
 
-      {/* 4. 重命名会话弹窗 */}
-      {renamingSession && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-80 bg-white dark:bg-[#141620] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#262a38] overflow-hidden p-5 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150 text-gray-800 dark:text-gray-100">
+      {/* 4. 重命名会话弹窗 (300ms 平滑缩放与淡入淡出) */}
+      <ModalTransition
+        isOpen={Boolean(renamingSession)}
+        onClose={() => setRenamingSession(null)}
+        zIndex={100}
+        duration={300}
+      >
+        {renamingSessionSnapshot && (
+          <div className="w-[360px] bg-white dark:bg-[#181a24] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#2a2e3f] overflow-hidden p-5 space-y-4 text-xs text-gray-800 dark:text-gray-100">
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 pb-3">
               <span className="font-bold text-gray-900 dark:text-white text-sm">重命名会话</span>
-              <button onClick={() => setRenamingSession(null)} className="text-gray-400 hover:text-gray-700 cursor-pointer">
+              <button onClick={() => setRenamingSession(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer">
                 <X size={16} />
               </button>
             </div>
@@ -1153,8 +1203,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <label className="block text-gray-700 dark:text-gray-300 font-medium mb-1">会话标题</label>
               <input
                 type="text"
-                value={renamingSession.title}
-                onChange={(e) => setRenamingSession({ ...renamingSession, title: e.target.value })}
+                value={renamingSessionSnapshot.title}
+                onChange={(e) => {
+                  const updated = { ...renamingSessionSnapshot, title: e.target.value };
+                  setRenamingSession(updated);
+                  setRenamingSessionSnapshot(updated);
+                }}
                 className="w-full px-3 py-2 bg-white dark:bg-[#1c1f2b] border border-gray-200 dark:border-[#2a2e3f] text-gray-900 dark:text-gray-100 rounded-xl focus:border-blue-500 outline-none"
               />
             </div>
@@ -1163,15 +1217,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={() => setRenamingSession(null)}
-                className="px-3 py-1.5 border border-gray-200 hover:bg-gray-100 rounded-xl transition cursor-pointer text-gray-600"
+                className="px-3.5 py-1.5 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-[#222534] rounded-xl transition cursor-pointer text-gray-600 dark:text-gray-300"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  if (onRenameSession) {
-                    onRenameSession(renamingSession.project, renamingSession.sid, renamingSession.title);
+                  if (onRenameSession && renamingSessionSnapshot) {
+                    onRenameSession(renamingSessionSnapshot.project, renamingSessionSnapshot.sid, renamingSessionSnapshot.title);
                   }
                   setRenamingSession(null);
                 }}
@@ -1181,8 +1235,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </ModalTransition>
     </aside>
   );
 };

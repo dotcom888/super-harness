@@ -1,3 +1,4 @@
+import { DropdownTransition } from "./DropdownTransition";
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Plus, 
@@ -153,9 +154,9 @@ export const BottomInput: React.FC<BottomInputProps> = ({
       case "plan":
         return <Compass size={13} className="text-amber-500" />;
       case "edit_auto":
-        return <FileEdit size={13} className="text-purple-500" />;
+        return <FileEdit size={13} className="text-emerald-500" />;
       case "manual":
-        return <ShieldCheck size={13} className="text-emerald-500" />;
+        return <ShieldCheck size={13} className="text-purple-500" />;
       default:
         return <Zap size={13} className="text-blue-500" />;
     }
@@ -489,10 +490,61 @@ export const BottomInput: React.FC<BottomInputProps> = ({
   ];
 
   const handleSelectCommand = (cmd: string) => {
-    setInput((prev) => (prev ? `${cmd} ${prev}` : `${cmd} `));
+    if (cmd === "/plan") {
+      setPermission("Plan 模式");
+      onPermissionChange?.("Plan 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+    if (cmd === "/auto") {
+      setPermission("Auto 模式");
+      onPermissionChange?.("Auto 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+    if (cmd === "/edit") {
+      setPermission("Edit-Auto 模式");
+      onPermissionChange?.("Edit-Auto 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+    if (cmd === "/manual") {
+      setPermission("Manual 模式");
+      onPermissionChange?.("Manual 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+
+    const nextVal = input ? `${cmd} ${input}` : `${cmd} `;
+    setInput(nextVal);
+    if (sessionId) saveDraft(sessionKey, nextVal, attachments);
+    onDraftChange?.(nextVal, attachments);
     setShowCommandMenu(false);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        const len = nextVal.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
+    });
     setTimeout(() => {
-      textareaRef.current?.focus();
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        const len = nextVal.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
     }, 50);
   };
 
@@ -541,16 +593,22 @@ export const BottomInput: React.FC<BottomInputProps> = ({
       {/* 底部吸附输入框卡片 (支持拖拽与复制粘贴上传；宽度与聊天内容区严格同步；悬浮状态与 4 种模式渐变色彩) */}
       <div className="w-full max-w-[57.6rem] mx-auto">
         <div
+          onClick={() => {
+            textareaRef.current?.focus();
+          }}
           className={`p-px rounded-[18px] bg-gradient-to-br ${modeVisual.gradientBorder} ${modeVisual.floatingShadow} ${modeVisual.focusGlow} opacity-65 hover:opacity-85 focus-within:opacity-100 transition-all duration-300 ease-out`}
         >
           <div 
+            onClick={() => {
+              textareaRef.current?.focus();
+            }}
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onPaste={handlePaste}
             onContextMenu={handleContextMenu}
-            className={`w-full bg-white dark:bg-[#181920] rounded-[17px] p-3 transition-colors relative ${
+            className={`w-full bg-white dark:bg-[#181920] rounded-[17px] p-3 transition-colors relative cursor-text ${
               isDragging ? "ring-2 ring-blue-500/30" : ""
             }`}
           >
@@ -596,7 +654,7 @@ export const BottomInput: React.FC<BottomInputProps> = ({
           onKeyDown={handleKeyDown}
           placeholder={currentModeId === "plan" ? "【Plan 模式 · 方案先行】输入你想规划的任务或重构目标，智能体将先深入调研并输出完整施工方案..." : "给 super 智能体发消息，输入 / 或点击左下角 + 选择快捷指令..."}
           style={{ minHeight: "44px", maxHeight: "144px" }}
-          className="w-full resize-none border-none outline-none text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed bg-transparent overflow-y-auto"
+          className="w-full resize-none border-none outline-none text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed bg-transparent overflow-y-auto select-text"
         />
 
         {/* 卡片工具条 */}
@@ -617,41 +675,39 @@ export const BottomInput: React.FC<BottomInputProps> = ({
                 <Plus size={17} />
               </button>
 
-              {/* 快捷指令弹出菜单 */}
-              {showCommandMenu && (
-                <>
-                  <div 
-                    className="fixed inset-0 z-20 cursor-default" 
-                    onClick={() => setShowCommandMenu(false)} 
-                  />
-                  <div className="absolute left-0 bottom-9 w-80 bg-white dark:bg-[#1e202a] border border-gray-200 dark:border-gray-700 shadow-2xl rounded-2xl py-2 z-30 text-xs animate-in fade-in zoom-in-95 duration-100">
-                    <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                      <span>常用快捷指令</span>
-                      <span className="text-[10px] text-gray-400 font-mono">共 21 个 · 可滚动</span>
-                    </div>
-                    <div className="max-h-[min(430px,55vh)] overflow-y-auto py-1">
-                      {shortcutCommands.map((item) => (
-                        <div
-                          key={item.cmd}
-                          onClick={() => handleSelectCommand(item.cmd)}
-                          className="px-3 py-2 hover:bg-blue-50/70 cursor-pointer flex items-start gap-2.5 transition text-gray-700 hover:text-blue-900 group"
-                        >
-                          <div className="mt-0.5 p-1 bg-gray-50 rounded-md group-hover:bg-white group-hover:shadow-xs transition">
-                            {item.icon}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-semibold text-blue-600 text-xs">{item.cmd}</span>
-                              <span className="font-medium text-gray-900 text-xs">{item.name}</span>
-                            </div>
-                            <p className="text-[11px] text-gray-400 truncate mt-0.5">{item.desc}</p>
-                          </div>
+              {/* 快捷指令弹出菜单 (300ms 缩放与淡入淡出过渡) */}
+              <DropdownTransition
+                isOpen={showCommandMenu}
+                onClose={() => setShowCommandMenu(false)}
+                origin="bottom-left"
+                className="absolute left-0 bottom-9 w-80 bg-white dark:bg-[#1e202a] border border-gray-200 dark:border-gray-700 shadow-2xl rounded-2xl py-2 z-30 text-xs"
+              >
+                <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                  <span>常用快捷指令</span>
+                  <span className="text-[10px] text-gray-400 font-mono">共 21 个 · 可滚动</span>
+                </div>
+                <div className="max-h-[min(430px,55vh)] overflow-y-auto py-1">
+                  {shortcutCommands.map((item) => (
+                    <div
+                      key={item.cmd}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleSelectCommand(item.cmd)}
+                      className="px-3 py-2 hover:bg-blue-50/70 cursor-pointer flex items-start gap-2.5 transition text-gray-700 hover:text-blue-900 group"
+                    >
+                      <div className="mt-0.5 p-1 bg-gray-50 rounded-md group-hover:bg-white group-hover:shadow-xs transition">
+                        {item.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-semibold text-blue-600 text-xs">{item.cmd}</span>
+                          <span className="font-medium text-gray-900 text-xs">{item.name}</span>
                         </div>
-                      ))}
+                        <p className="text-[11px] text-gray-400 truncate mt-0.5">{item.desc}</p>
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  ))}
+                </div>
+              </DropdownTransition>
             </div>
 
             {/* 新增附件上传按钮 📎 (支持多选与各种文档/图片格式) */}
@@ -696,45 +752,43 @@ export const BottomInput: React.FC<BottomInputProps> = ({
                 <ChevronDown size={11} className="text-gray-400" />
               </button>
               
-              {showPermMenu && (
-                <>
-                  <div 
-                    className="fixed inset-0 z-20 cursor-default" 
-                    onClick={() => setShowPermMenu(false)} 
-                  />
-                  <div className="absolute left-0 bottom-8 w-64 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200">
-                    <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                      <span>运行安全级别</span>
-                      <span className="text-[10px] text-gray-400">4 阶策略</span>
-                    </div>
-                    {EXECUTION_MODES.map((item) => {
-                      const isSelected = currentModeId === item.id;
-                      return (
-                        <div
-                          key={item.id}
-                          onClick={() => {
-                            setPermission(item.name);
-                            setShowPermMenu(false);
-                            onPermissionChange?.(item.name);
-                          }}
-                          className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex flex-col transition ${
-                            isSelected ? "text-blue-600 font-semibold bg-blue-50/50 dark:bg-blue-950/30" : "text-gray-700 dark:text-gray-300"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              {renderModeIcon(item.id)}
-                              <span>{item.name}</span>
-                            </div>
-                            {isSelected && <Check size={13} className="text-blue-600 ml-1 shrink-0" />}
-                          </div>
-                          <span className="text-[10px] text-gray-400 mt-0.5 leading-tight">{item.desc}</span>
+              {/* 运行安全级别执行模式下拉菜单 (300ms 缩放与淡入淡出过渡) */}
+              <DropdownTransition
+                isOpen={showPermMenu}
+                onClose={() => setShowPermMenu(false)}
+                origin="bottom-left"
+                className="absolute left-0 bottom-8 w-64 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200"
+              >
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                  <span>运行安全级别</span>
+                  <span className="text-[10px] text-gray-400">4 阶策略</span>
+                </div>
+                {EXECUTION_MODES.map((item) => {
+                  const isSelected = currentModeId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => {
+                        setPermission(item.name);
+                        setShowPermMenu(false);
+                        onPermissionChange?.(item.name);
+                      }}
+                      className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex flex-col transition ${
+                        isSelected ? "text-blue-600 font-semibold bg-blue-50/50 dark:bg-blue-950/30" : "text-gray-700 dark:text-gray-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {renderModeIcon(item.id)}
+                          <span>{item.name}</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
+                        {isSelected && <Check size={13} className="text-blue-600 ml-1 shrink-0" />}
+                      </div>
+                      <span className="text-[10px] text-gray-400 mt-0.5 leading-tight">{item.desc}</span>
+                    </div>
+                  );
+                })}
+              </DropdownTransition>
             </div>
           </div>
 
@@ -750,69 +804,67 @@ export const BottomInput: React.FC<BottomInputProps> = ({
                 <ChevronDown size={11} className="text-gray-400" />
               </button>
 
-              {showModelMenu && (
-                <>
-                  <div 
-                    className="fixed inset-0 z-20 cursor-default" 
-                    onClick={() => setShowModelMenu(false)} 
-                  />
-                  <div className="absolute right-0 bottom-8 w-56 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200">
-                    <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                      <span>已配置模型列表</span>
-                      <span className="text-[10px] text-gray-400">无缝切换</span>
-                    </div>
-                    <div className="max-h-56 overflow-y-auto py-1">
-                      {models && models.length > 0 ? (
-                        models.map((m) => {
-                          const isCur = m === model;
-                          return (
-                            <div
-                              key={m}
-                              onClick={() => handleSelectModel(m)}
-                              className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex items-center justify-between transition ${
-                                isCur ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
-                              }`}
-                            >
-                              <div className="flex flex-col min-w-0 pr-2">
-                                <span className="truncate font-mono">{m}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {modelProviders && modelProviders[m] && (
-                                  <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal select-none">
-                                    {modelProviders[m]}
-                                  </span>
-                                )}
-                                {isCur ? (
-                                  <Check size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
-                                ) : (
-                                  <span className="w-3.5" />
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="px-3.5 py-3 text-center text-gray-400 text-xs">
-                          暂无已配置模型
+              {/* 模型切换选择器下拉菜单 (300ms 缩放与淡入淡出过渡) */}
+              <DropdownTransition
+                isOpen={showModelMenu}
+                onClose={() => setShowModelMenu(false)}
+                origin="bottom-right"
+                className="absolute right-0 bottom-8 w-56 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200"
+              >
+                <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                  <span>已配置模型列表</span>
+                  <span className="text-[10px] text-gray-400">无缝切换</span>
+                </div>
+                <div className="max-h-56 overflow-y-auto py-1">
+                  {models && models.length > 0 ? (
+                    models.map((m) => {
+                      const isCur = m === model;
+                      return (
+                        <div
+                          key={m}
+                          onClick={() => handleSelectModel(m)}
+                          className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex items-center justify-between transition ${
+                            isCur ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
+                          }`}
+                        >
+                          <div className="flex flex-col min-w-0 pr-2">
+                            <span className="truncate font-mono">{m}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {modelProviders && modelProviders[m] && (
+                              <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal select-none">
+                                {modelProviders[m]}
+                              </span>
+                            )}
+                            {isCur ? (
+                              <Check size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                            ) : (
+                              <span className="w-3.5" />
+                            )}
+                          </div>
                         </div>
-                      )}
+                      );
+                    })
+                  ) : (
+                    <div className="px-3.5 py-3 text-center text-gray-400 text-xs">
+                      暂无已配置模型
                     </div>
-                    <div className="border-t border-gray-100 dark:border-gray-800 p-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowModelMenu(false);
-                          onOpenModelSettings?.();
-                        }}
-                        className="w-full px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium transition cursor-pointer"
-                      >
-                        <Plus size={13} />
-                        <span>添加模型</span>
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
+                  )}
+                </div>
+                <div className="border-t border-gray-100 dark:border-gray-800 p-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowModelMenu(false);
+                      onOpenModelSettings?.();
+                    }}
+                    className="w-full px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium transition cursor-pointer"
+                  >
+                    <Plus size={13} />
+                    <span>添加模型</span>
+                  </button>
+                </div>
+              </DropdownTransition>
             </div>
 
             {/* 重试/刷新小按钮 */}

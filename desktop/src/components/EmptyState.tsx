@@ -1,3 +1,4 @@
+import { DropdownTransition } from "./DropdownTransition";
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Folder, 
@@ -434,10 +435,61 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   };
 
   const handleSelectCommand = (cmd: string) => {
-    setInput((prev) => (prev ? `${cmd} ${prev}` : `${cmd} `));
+    if (cmd === "/plan") {
+      setPermission("Plan 模式");
+      onPermissionChange?.("Plan 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+    if (cmd === "/auto") {
+      setPermission("Auto 模式");
+      onPermissionChange?.("Auto 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+    if (cmd === "/edit") {
+      setPermission("Edit-Auto 模式");
+      onPermissionChange?.("Edit-Auto 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+    if (cmd === "/manual") {
+      setPermission("Manual 模式");
+      onPermissionChange?.("Manual 模式");
+      setShowCommandMenu(false);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+      });
+      return;
+    }
+
+    const nextVal = input ? `${cmd} ${input}` : `${cmd} `;
+    setInput(nextVal);
+    saveDraft("new_session", nextVal, attachments);
+    onDraftChange?.(nextVal, attachments);
     setShowCommandMenu(false);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        const len = nextVal.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
+    });
     setTimeout(() => {
-      textareaRef.current?.focus();
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        const len = nextVal.length;
+        textareaRef.current.setSelectionRange(len, len);
+      }
     }, 50);
   };
 
@@ -533,84 +585,81 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             </button>
 
             {/* 工作区下拉菜单 */}
-            {showWorkspaceMenu && (
-              <>
-                <div 
-                  className="fixed inset-0 z-20 cursor-default" 
-                  onClick={() => setShowWorkspaceMenu(false)} 
-                />
-                <div className="absolute left-0 top-8 w-64 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200">
-                  <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                    <span>选择目标工作区</span>
-                    <span className="text-[10px] text-gray-400">{displayProjects.length} 个项目</span>
+            <DropdownTransition
+              isOpen={showWorkspaceMenu}
+              onClose={() => setShowWorkspaceMenu(false)}
+              origin="top-left"
+              className="absolute left-0 top-8 w-64 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200"
+            >
+              <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <span>选择目标工作区</span>
+                <span className="text-[10px] text-gray-400">{displayProjects.length} 个项目</span>
+              </div>
+              <div className="max-h-56 overflow-y-auto py-1">
+                {displayProjects.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-xs text-gray-400 dark:text-gray-500">
+                    暂无已添加的工作区，请点击下方添加
                   </div>
-                  <div className="max-h-56 overflow-y-auto py-1">
-                    {displayProjects.length === 0 ? (
-                      <div className="px-3 py-4 text-center text-xs text-gray-400 dark:text-gray-500">
-                        暂无已添加的工作区，请点击下方添加
-                      </div>
-                    ) : (
-                      displayProjects.map((p) => {
-                      const isCur = p.name === projectName;
-                      return (
-                        <div
-                          key={p.name}
-                          onClick={() => handleSelectProj(p.name)}
-                          className={`px-3 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition ${
-                            isCur ? "text-blue-600 font-semibold bg-blue-50/60" : "text-gray-700"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 truncate pr-2">
-                            <Folder size={13} className={isCur ? "text-blue-600" : "text-gray-400"} />
-                            <span className="truncate">{p.name}</span>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="text-[10px] text-gray-400 bg-gray-100 px-1 rounded">
-                              {p.session_count || (p.sessions ? p.sessions.length : 0)} 会话
-                            </span>
-                            {isCur && <Check size={13} className="text-blue-600 ml-1" />}
-                          </div>
-                        </div>
-                      );
-                    }))}
-                  </div>
-                  
-                  {/* 下拉框底部操作：添加新的工作区 & 不在项目中 (对标图四需求 5) */}
-                  <div className="border-t border-gray-100 dark:border-gray-800 pt-1 mt-1 px-1 space-y-0.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowWorkspaceMenu(false);
-                        if (onAddWorkspace) onAddWorkspace();
-                      }}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg transition font-medium text-xs text-left cursor-pointer"
-                    >
-                      <FolderPlus size={14} className="text-blue-600 shrink-0" />
-                      <span>+ 添加新的工作区（选择磁盘项目）</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowWorkspaceMenu(false);
-                        handleSelectProj("_general");
-                      }}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition font-medium text-xs text-left cursor-pointer ${
-                        projectName === "_general"
-                          ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-950/40"
-                          : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-[#20232e]"
+                ) : (
+                  displayProjects.map((p) => {
+                  const isCur = p.name === projectName;
+                  return (
+                    <div
+                      key={p.name}
+                      onClick={() => handleSelectProj(p.name)}
+                      className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex items-center justify-between transition ${
+                        isCur ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
                       }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <MessageSquare size={14} className={projectName === "_general" ? "text-blue-600" : "text-gray-400"} />
-                        <span>不在项目中</span>
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <Folder size={13} className={isCur ? "text-blue-600" : "text-gray-400"} />
+                        <span className="truncate">{p.name}</span>
                       </div>
-                      {projectName === "_general" && <Check size={13} className="text-blue-600 ml-1" />}
-                    </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-800 px-1 rounded">
+                          {p.session_count || (p.sessions ? p.sessions.length : 0)} 会话
+                        </span>
+                        {isCur && <Check size={13} className="text-blue-600 ml-1" />}
+                      </div>
+                    </div>
+                  );
+                }))}
+              </div>
+              
+              {/* 下拉框底部操作：添加新的工作区 & 不在项目中 (对标图四需求 5) */}
+              <div className="border-t border-gray-100 dark:border-gray-800 pt-1 mt-1 px-1 space-y-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWorkspaceMenu(false);
+                    if (onAddWorkspace) onAddWorkspace();
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg transition font-medium text-xs text-left cursor-pointer"
+                >
+                  <FolderPlus size={14} className="text-blue-600 shrink-0" />
+                  <span>+ 添加新的工作区（选择磁盘项目）</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWorkspaceMenu(false);
+                    handleSelectProj("_general");
+                  }}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition font-medium text-xs text-left cursor-pointer ${
+                    projectName === "_general"
+                      ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-950/40"
+                      : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-[#20232e]"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <MessageSquare size={14} className={projectName === "_general" ? "text-blue-600" : "text-gray-400"} />
+                    <span>不在项目中</span>
                   </div>
-                </div>
-              </>
-            )}
+                  {projectName === "_general" && <Check size={13} className="text-blue-600 ml-1" />}
+                </button>
+              </div>
+            </DropdownTransition>
           </div>
 
         </div>
@@ -626,16 +675,22 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
         {/* 悬浮圆角输入框卡片 (支持拖拽上传；悬浮状态与 4 种模式渐变色彩) */}
         <div
+          onClick={() => {
+            textareaRef.current?.focus();
+          }}
           className={`w-full p-px rounded-[18px] bg-gradient-to-br ${modeVisual.gradientBorder} ${modeVisual.floatingShadow} ${modeVisual.focusGlow} opacity-65 hover:opacity-85 focus-within:opacity-100 transition-all duration-300 ease-out`}
         >
           <div 
+            onClick={() => {
+              textareaRef.current?.focus();
+            }}
             onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onPaste={handlePaste}
             onContextMenu={handleContextMenu}
-            className={`w-full bg-white dark:bg-[#161822] rounded-[17px] p-3.5 transition-colors relative ${
+            className={`w-full bg-white dark:bg-[#161822] rounded-[17px] p-3.5 transition-colors relative cursor-text ${
               isDragging ? "ring-2 ring-blue-500/30" : ""
             }`}
           >
@@ -681,7 +736,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={projectName ? `描述你想让 super 智能体在 "${projectName}" 中构建或排查的任务...` : (displayProjects.length > 0 ? "请先在上方选择一个项目工作区，然后输入任务..." : "请先在上方点击添加项目工作区，然后输入任务...")}
             rows={3}
-            className="w-full resize-none border-none outline-none text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed bg-transparent"
+            className="w-full resize-none border-none outline-none text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed bg-transparent select-text"
           />
 
           {/* 卡片底栏工具条 */}
@@ -703,40 +758,38 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                 </button>
 
                 {/* 快捷指令弹出菜单 */}
-                {showCommandMenu && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-20 cursor-default" 
-                      onClick={() => setShowCommandMenu(false)} 
-                    />
-                    <div className="absolute left-0 bottom-9 w-80 bg-white dark:bg-[#1e202a] border border-gray-200 dark:border-gray-700 shadow-2xl rounded-2xl py-2 z-30 text-xs animate-in fade-in zoom-in-95 duration-100">
-                      <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 flex items-center justify-between">
-                        <span>常用快捷指令</span>
-                        <span className="text-[10px] text-gray-400 font-mono">共 21 个 · 可滚动</span>
-                      </div>
-                      <div className="max-h-[min(430px,55vh)] overflow-y-auto py-1">
-                        {shortcutCommands.map((item) => (
-                          <div
-                            key={item.cmd}
-                            onClick={() => handleSelectCommand(item.cmd)}
-                            className="px-3 py-2 hover:bg-blue-50/70 cursor-pointer flex items-start gap-2.5 transition text-gray-700 hover:text-blue-900 group"
-                          >
-                            <div className="mt-0.5 p-1 bg-gray-50 rounded-md group-hover:bg-white group-hover:shadow-xs transition">
-                              {item.icon}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono font-semibold text-blue-600 text-xs">{item.cmd}</span>
-                                <span className="font-medium text-gray-900 text-xs">{item.name}</span>
-                              </div>
-                              <p className="text-[11px] text-gray-400 truncate mt-0.5">{item.desc}</p>
-                            </div>
+                <DropdownTransition
+                  isOpen={showCommandMenu}
+                  onClose={() => setShowCommandMenu(false)}
+                  origin="bottom-left"
+                  className="absolute left-0 bottom-9 w-80 bg-white dark:bg-[#1e202a] border border-gray-200 dark:border-gray-700 shadow-2xl rounded-2xl py-2 z-30 text-xs"
+                >
+                  <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                    <span>常用快捷指令</span>
+                    <span className="text-[10px] text-gray-400 font-mono">共 21 个 · 可滚动</span>
+                  </div>
+                  <div className="max-h-[min(430px,55vh)] overflow-y-auto py-1">
+                    {shortcutCommands.map((item) => (
+                      <div
+                        key={item.cmd}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleSelectCommand(item.cmd)}
+                        className="px-3 py-2 hover:bg-blue-50/70 dark:hover:bg-[#282c3c] cursor-pointer flex items-start gap-2.5 transition text-gray-700 dark:text-gray-200 hover:text-blue-900 dark:hover:text-blue-300 group"
+                      >
+                        <div className="mt-0.5 p-1 bg-gray-50 dark:bg-[#2a2e40] rounded-md group-hover:bg-white dark:group-hover:bg-[#32364c] group-hover:shadow-xs transition">
+                          {item.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-semibold text-blue-600 dark:text-blue-400 text-xs">{item.cmd}</span>
+                            <span className="font-medium text-gray-900 dark:text-gray-100 text-xs">{item.name}</span>
                           </div>
-                        ))}
+                          <p className="text-[11px] text-gray-400 truncate mt-0.5">{item.desc}</p>
+                        </div>
                       </div>
-                    </div>
-                  </>
-                )}
+                    ))}
+                  </div>
+                </DropdownTransition>
               </div>
 
               {/* 新增附件上传按钮 📎 (支持多选与各种文档/图片格式) */}
@@ -781,45 +834,42 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                   <ChevronDown size={11} className="text-gray-400" />
                 </button>
 
-                {showPermMenu && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-20 cursor-default" 
-                      onClick={() => setShowPermMenu(false)} 
-                    />
-                    <div className="absolute left-0 bottom-9 w-64 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200">
-                      <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                        <span>运行安全级别</span>
-                        <span className="text-[10px] text-gray-400">4 阶策略</span>
+                <DropdownTransition
+                isOpen={showPermMenu}
+                onClose={() => setShowPermMenu(false)}
+                origin="bottom-left"
+                className="absolute left-0 bottom-9 w-64 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200"
+              >
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                  <span>运行安全级别</span>
+                  <span className="text-[10px] text-gray-400">4 阶策略</span>
+                </div>
+                {EXECUTION_MODES.map((item) => {
+                  const isCur = currentModeId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => {
+                        setPermission(item.name);
+                        setShowPermMenu(false);
+                        onPermissionChange?.(item.name);
+                      }}
+                      className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex flex-col transition ${
+                        isCur ? "text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/50 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {renderModeIcon(item.id)}
+                          <span>{item.name}</span>
+                        </div>
+                        {isCur && <Check size={13} className="text-blue-600 dark:text-blue-400" />}
                       </div>
-                      {EXECUTION_MODES.map((item) => {
-                        const isCur = currentModeId === item.id;
-                        return (
-                          <div
-                            key={item.id}
-                            onClick={() => {
-                              setPermission(item.name);
-                              setShowPermMenu(false);
-                              onPermissionChange?.(item.name);
-                            }}
-                            className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex flex-col transition ${
-                              isCur ? "text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/50 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                {renderModeIcon(item.id)}
-                                <span>{item.name}</span>
-                              </div>
-                              {isCur && <Check size={13} className="text-blue-600 dark:text-blue-400" />}
-                            </div>
-                            <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 pl-5">{item.desc}</span>
-                          </div>
-                        );
-                      })}
+                      <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 pl-5">{item.desc}</span>
                     </div>
-                  </>
-                )}
+                  );
+                })}
+              </DropdownTransition>
               </div>
             </div>
 
@@ -835,69 +885,66 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                   <ChevronDown size={12} className="text-gray-400" />
                 </button>
 
-                {showModelMenu && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-20 cursor-default" 
-                      onClick={() => setShowModelMenu(false)} 
-                    />
-                    <div className="absolute right-0 bottom-8 w-56 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200">
-                      <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                        <span>已配置模型列表</span>
-                        <span className="text-[10px] text-gray-400">无缝切换</span>
-                      </div>
-                      <div className="max-h-56 overflow-y-auto py-1">
-                        {models && models.length > 0 ? (
-                          models.map((m) => {
-                            const isCur = m === model;
-                            return (
-                              <div
-                                key={m}
-                                onClick={() => handleSelectModel(m)}
-                                className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex items-center justify-between transition ${
-                                  isCur ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
-                                }`}
-                              >
-                                <div className="flex flex-col min-w-0 pr-2">
-                                  <span className="truncate font-mono">{m}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {modelProviders && modelProviders[m] && (
-                                    <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal select-none">
-                                      {modelProviders[m]}
-                                    </span>
-                                  )}
-                                  {isCur ? (
-                                    <Check size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
-                                  ) : (
-                                    <span className="w-3.5" />
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="px-3.5 py-3 text-center text-gray-400 text-xs">
-                            暂无已配置模型
+                <DropdownTransition
+                  isOpen={showModelMenu}
+                  onClose={() => setShowModelMenu(false)}
+                  origin="bottom-right"
+                  className="absolute right-0 bottom-8 w-56 bg-white dark:bg-[#1a1d27] border border-gray-200 dark:border-[#2a2e3f] shadow-xl rounded-xl py-1 z-30 text-xs text-gray-800 dark:text-gray-200"
+                >
+                  <div className="px-3.5 py-1.5 text-[11px] font-semibold text-gray-400 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                    <span>已配置模型列表</span>
+                    <span className="text-[10px] text-gray-400">无缝切换</span>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto py-1">
+                    {models && models.length > 0 ? (
+                      models.map((m) => {
+                        const isCur = m === model;
+                        return (
+                          <div
+                            key={m}
+                            onClick={() => handleSelectModel(m)}
+                            className={`px-3 py-2 hover:bg-gray-50 dark:hover:bg-[#222534] cursor-pointer flex items-center justify-between transition ${
+                              isCur ? "text-blue-600 font-semibold bg-blue-50/60 dark:bg-blue-900/20" : "text-gray-700 dark:text-gray-300"
+                            }`}
+                          >
+                            <div className="flex flex-col min-w-0 pr-2">
+                              <span className="truncate font-mono">{m}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {modelProviders && modelProviders[m] && (
+                                <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal select-none">
+                                  {modelProviders[m]}
+                                </span>
+                              )}
+                              {isCur ? (
+                                <Check size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                              ) : (
+                                <span className="w-3.5" />
+                              )}
+                            </div>
                           </div>
-                        )}
+                        );
+                      })
+                    ) : (
+                      <div className="px-3.5 py-3 text-center text-gray-400 text-xs">
+                        暂无已配置模型
                       </div>
-                      <div className="border-t border-gray-100 dark:border-gray-800 p-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowModelMenu(false);
-                            onOpenModelSettings?.();
-                          }}
-                          className="w-full px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium transition cursor-pointer"
-                        >
-                          <Plus size={13} />
-                          <span>添加模型</span>
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                )}
+                    )}
+                  </div>
+                  <div className="border-t border-gray-100 dark:border-gray-800 p-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowModelMenu(false);
+                        onOpenModelSettings?.();
+                      }}
+                      className="w-full px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium transition cursor-pointer"
+                    >
+                      <Plus size={13} />
+                      <span>添加模型</span>
+                    </button>
+                  </div>
+                </DropdownTransition>
               </div>
 
               {/* 蓝色向上发送按钮 / 思考中暂停按钮 */}
