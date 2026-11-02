@@ -130,6 +130,18 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // 输入框自适应高度调节：换行时随内容动态扩展，最大为初始 3 行高度（约 72px）的两倍（144px）
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const baseHeight = 72; // 基础 3 行初始高度
+    const maxHeight = baseHeight * 2; // 最大为现在的两倍 (144px)
+    const targetHeight = Math.min(Math.max(textarea.scrollHeight, baseHeight), maxHeight);
+    textarea.style.height = targetHeight + "px";
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input]);
+
   const handleUploadFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
     setIsUploading(true);
@@ -736,6 +748,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={projectName ? `描述你想让 super 智能体在 "${projectName}" 中构建或排查的任务...` : (displayProjects.length > 0 ? "请先在上方选择一个项目工作区，然后输入任务..." : "请先在上方点击添加项目工作区，然后输入任务...")}
             rows={3}
+            style={{ minHeight: "72px", maxHeight: "144px" }}
             className="w-full resize-none border-none outline-none text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed bg-transparent select-text"
           />
 

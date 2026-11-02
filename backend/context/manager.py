@@ -445,7 +445,7 @@ class ContextManager:
         # 核心短语有效长度校验 (>= 2 字符且不仅是标点)
         pure_chars = re.sub(r"[^\w\u4e00-\u9fa5]", "", trimmed)
         if len(pure_chars) >= 2:
-            return trimmed[:120]
+            return trimmed[:2000]
         return None
 
     def start_new_turn(
@@ -458,6 +458,7 @@ class ContextManager:
         now_ts = time.time()
         self.turn_count += 1
         self.current_turn = TurnChunk(turn_id=self.turn_count, start_time=now_ts)
+        self.current_turn.user_content = user_content
         if hasattr(self, "snapshot_manager") and self.snapshot_manager:
             self.snapshot_manager.set_active_turn(self.session_id, self.turn_count)
 
@@ -495,7 +496,7 @@ class ContextManager:
             if not self.working_memory.current_goal or not self.working_memory._is_manual_goal:
                 self.working_memory.update_goal(extracted_goal, is_manual=False)
         elif not self.working_memory.current_goal and user_content.strip():
-            self.working_memory.update_goal(user_content.strip()[:120], is_manual=False)
+            self.working_memory.update_goal(user_content.strip()[:2000], is_manual=False)
 
     def add_assistant_message(self, message: Any, fallback_user_content: str = ""):
         if not self.current_turn:
@@ -553,8 +554,15 @@ class ContextManager:
             }
             self._state_snapshots.append(snapshot)
             self.completed_turns.append(self.current_turn)
+            u_prompt = getattr(self.current_turn, "user_content", "")
+            if not u_prompt:
+                for m in getattr(self.current_turn, "messages", []):
+                    if m.get("role") == "user" and m.get("content"):
+                        u_prompt = m["content"]
+                        break
             self._append_to_disk("turn_finished", {
                 "turn_id": self.current_turn.turn_id,
+                "user_prompt": u_prompt,
                 "elapsed": turn_elapsed,
                 "start_time": self.current_turn.start_time,
                 "end_time": self.current_turn.end_time,

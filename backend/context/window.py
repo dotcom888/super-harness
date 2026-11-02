@@ -12,6 +12,7 @@ class TurnChunk:
     def __init__(self, turn_id: int, start_time: Optional[float] = None):
         self.turn_id = turn_id
         self.messages: List[Dict[str, Any]] = []
+        self.user_content: str = ""
         self.start_time: float = start_time if start_time is not None else time.time()
         self.end_time: Optional[float] = None
         self.elapsed: float = 0.0

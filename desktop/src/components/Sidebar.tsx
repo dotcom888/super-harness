@@ -193,8 +193,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     if (projectName && projectName !== "_general") {
       setExpandedProjects((prev) => {
-        if (prev[projectName] === true) return prev;
-        const next = { ...prev, [projectName]: true };
+        const matchedKey = Object.keys(prev).find((k) => k.toLowerCase() === projectName.toLowerCase()) || projectName;
+        if (prev[matchedKey] === true) return prev;
+        const next = { ...prev, [matchedKey]: true };
         try {
           localStorage.setItem("super_expanded_projects", JSON.stringify(next));
         } catch (e) {}
@@ -612,10 +613,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             ) : (
               displayProjects.map((proj) => {
-              const isCurrent = proj.name === projectName;
+              const isCurrent = proj.name.toLowerCase() === (projectName || "").toLowerCase();
               // 解决需求 1：展开状态使用独立记录的 expandedProjects，默认全部展开，切换会话不再收起
               const isExpanded = expandedProjects[proj.name] ?? true;
-              const projSessions = proj.sessions || [];
+              const currentSessions = (isCurrent && sessions && sessions.length > 0) ? sessions : null;
+              const projSessions = currentSessions && (currentSessions.length > (proj.sessions?.length || 0) || currentSessions.some((s) => s.session_id === activeSessionId))
+                ? currentSessions
+                : (proj.sessions || []);
               const isPinned = proj.is_pinned;
 
               const activeSessionIdx = projSessions.findIndex((s) => s.session_id === activeSessionId);

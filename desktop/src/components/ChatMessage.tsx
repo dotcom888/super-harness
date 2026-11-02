@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { 
-  ChevronDown, 
+  ChevronDown,
+  ChevronUp,
   ChevronRight, 
   Check, 
   Copy, 
@@ -97,7 +98,7 @@ const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
           return (
             <code 
               key={i} 
-              className="px-1.5 py-0.5 mx-0.5 rounded-md bg-gray-100 dark:bg-[#252837] text-pink-600 dark:text-pink-400 font-mono text-[11.5px] border border-gray-200/70 dark:border-gray-700/70 select-text"
+              className="px-1.5 py-0.5 mx-0.5 rounded-[5px] bg-[#edf0f3] dark:bg-[#252a35] text-[#1e293b] dark:text-[#e2e8f0] font-mono text-[12px] border border-gray-200/80 dark:border-gray-700/80 font-medium select-text"
             >
               {part.slice(1, -1)}
             </code>
@@ -105,7 +106,7 @@ const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
         }
         if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
           return (
-            <strong key={i} className="font-semibold text-gray-900 dark:text-white">
+            <strong key={i} className="font-bold text-gray-950 dark:text-gray-50">
               {part.slice(2, -2)}
             </strong>
           );
@@ -169,23 +170,31 @@ const CodeBlock: React.FC<{ code: string; language: string }> = ({ code, languag
     return <AsciiDiagramBlock content={code} title={language ? `流程图 (${language})` : undefined} />;
   }
 
+  const isTerminalLang = ["bash", "sh", "shell", "zsh", "cmd", "powershell"].includes((language || "").toLowerCase());
+
   return (
-    <div className="my-3.5 rounded-xl overflow-hidden border border-gray-200/90 dark:border-gray-800 bg-[#f8fafc] dark:bg-[#12141c] text-gray-800 dark:text-gray-200 font-mono text-[13px] shadow-2xs">
-      <div className="flex items-center justify-between px-3.5 py-2 bg-[#f1f5f9] dark:bg-[#1a1d27] border-b border-gray-200/80 dark:border-gray-800 select-none text-xs text-gray-500 dark:text-gray-400">
+    <div className="my-3 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 bg-[#f8fafc] dark:bg-[#11131a] text-gray-800 dark:text-gray-200 font-mono text-[12.5px] shadow-2xs">
+      <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#f1f4f8] dark:bg-[#181a24] border-b border-gray-200/80 dark:border-gray-800 select-none text-xs text-gray-500 dark:text-gray-400">
         <div className="flex items-center gap-1.5">
-          <Code size={13} className="text-blue-600 dark:text-blue-400" />
-          <span className="font-semibold text-gray-700 dark:text-gray-300 lowercase">{language || "text"}</span>
+          {isTerminalLang ? (
+            <Terminal size={12.5} className="text-gray-600 dark:text-gray-400" />
+          ) : (
+            <Code size={12.5} className="text-blue-600 dark:text-blue-400" />
+          )}
+          <span className="font-semibold text-gray-700 dark:text-gray-300 lowercase text-[11.5px] font-mono">
+            {language || "code"}
+          </span>
         </div>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md hover:bg-gray-200/70 dark:hover:bg-[#2d303d] text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition cursor-pointer text-xs font-sans font-medium"
+          className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-200/70 dark:hover:bg-[#282b3a] text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition cursor-pointer text-[11px] font-sans font-medium"
           title="复制代码"
         >
-          {copied ? <Check size={13} className="text-green-600 dark:text-green-400" /> : <Copy size={13} />}
+          {copied ? <Check size={11.5} className="text-green-600 dark:text-green-400" /> : <Copy size={11.5} />}
           <span>{copied ? "已复制" : "复制代码"}</span>
         </button>
       </div>
-      <pre className="p-4 overflow-x-auto text-[13px] leading-[1.65] text-[#1e293b] dark:text-[#e2e8f0] bg-[#f8fafc] dark:bg-[#12141c] select-text">
+      <pre className="p-3.5 overflow-x-auto text-[12.5px] leading-[1.65] text-[#1e293b] dark:text-[#e2e8f0] bg-[#f8fafc] dark:bg-[#11131a] select-text">
         <code>{code}</code>
       </pre>
     </div>
@@ -201,14 +210,14 @@ interface ParsedTable {
 
 const TableBlock: React.FC<{ table: ParsedTable }> = ({ table }) => {
   return (
-    <div className="my-3 overflow-x-auto rounded-xl border border-gray-200/90 dark:border-gray-700/80 shadow-2xs bg-white dark:bg-[#1a1c24]">
-      <table className="w-full text-xs text-left border-collapse">
+    <div className="my-3.5 w-full overflow-x-auto rounded-lg border border-gray-200/80 dark:border-gray-700/80 shadow-2xs bg-white dark:bg-[#161822]">
+      <table className="w-full text-[12.5px] text-left border-collapse font-sans">
         <thead>
-          <tr className="bg-gray-100/80 dark:bg-[#222533] border-b border-gray-200/90 dark:border-gray-700/80 text-gray-800 dark:text-gray-200">
+          <tr className="bg-gray-50/90 dark:bg-[#1f2330] border-b border-gray-200/90 dark:border-gray-700/80 text-gray-900 dark:text-gray-100">
             {table.headers.map((h, i) => (
               <th 
                 key={i} 
-                className={`px-3.5 py-2.5 font-bold whitespace-nowrap ${
+                className={`px-4 py-2.5 font-semibold text-xs text-gray-900 dark:text-gray-100 ${
                   table.alignments[i] === "center" ? "text-center" : table.alignments[i] === "right" ? "text-right" : "text-left"
                 }`}
               >
@@ -219,11 +228,14 @@ const TableBlock: React.FC<{ table: ParsedTable }> = ({ table }) => {
         </thead>
         <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
           {table.rows.map((row, rIdx) => (
-            <tr key={rIdx} className="hover:bg-gray-50/60 dark:hover:bg-[#1f222e] transition">
+            <tr 
+              key={rIdx} 
+              className="even:bg-gray-50/40 dark:even:bg-[#1a1d27]/50 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors"
+            >
               {row.map((cell, cIdx) => (
                 <td 
                   key={cIdx} 
-                  className={`px-3.5 py-2.5 text-gray-700 dark:text-gray-300 align-top leading-relaxed ${
+                  className={`px-4 py-2.5 text-gray-700 dark:text-gray-200 border-b border-gray-100 dark:border-gray-800/80 align-top leading-relaxed ${
                     table.alignments[cIdx] === "center" ? "text-center" : table.alignments[cIdx] === "right" ? "text-right" : "text-left"
                   }`}
                 >
@@ -308,11 +320,24 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       continue;
     }
 
-    // 4. 标题 (H1, H2, H3, H4) 对标 Codex 清晰层次
+    // 4. 中文大纲标题 (如 "一、 问题分析与根因排查" 对标图二)
+    const chineseHeadingMatch = trimmed.match(/^([一二三四五六七八九十]+[、. ])\s*(.*)$/);
+    if (chineseHeadingMatch && !trimmed.endsWith("。") && !trimmed.endsWith("；")) {
+      elements.push(
+        <h2 key={`cn_h2_${i}`} className="text-[15px] font-bold text-gray-900 dark:text-white mt-4 mb-2 tracking-tight flex items-center gap-1.5">
+          <span className="text-blue-600 dark:text-blue-400 font-bold">{chineseHeadingMatch[1]}</span>
+          <span><InlineMarkdown text={chineseHeadingMatch[2]} /></span>
+        </h2>
+      );
+      i++;
+      continue;
+    }
+
+    // 5. 标题 (H1, H2, H3, H4) 对标 Codex 清晰层次
     if (trimmed.startsWith("#")) {
       if (trimmed.startsWith("#### ")) {
         elements.push(
-          <h4 key={`h4_${i}`} className="text-sm font-semibold text-gray-800 dark:text-gray-200 mt-3 mb-1">
+          <h4 key={`h4_${i}`} className="text-[13.5px] font-semibold text-gray-800 dark:text-gray-200 mt-3 mb-1">
             <InlineMarkdown text={trimmed.slice(5)} />
           </h4>
         );
@@ -321,7 +346,7 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       }
       if (trimmed.startsWith("### ")) {
         elements.push(
-          <h3 key={`h3_${i}`} className="text-sm font-bold text-gray-900 dark:text-gray-100 mt-3.5 mb-1.5">
+          <h3 key={`h3_${i}`} className="text-[14.5px] font-bold text-gray-900 dark:text-gray-100 mt-3.5 mb-1.5">
             <InlineMarkdown text={trimmed.slice(4)} />
           </h3>
         );
@@ -330,7 +355,7 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       }
       if (trimmed.startsWith("## ")) {
         elements.push(
-          <h2 key={`h2_${i}`} className="text-base font-bold text-gray-900 dark:text-white mt-4 mb-2 pb-1 border-b border-gray-100 dark:border-gray-800">
+          <h2 key={`h2_${i}`} className="text-[15.5px] font-bold text-gray-900 dark:text-white mt-4 mb-2 pb-1 border-b border-gray-100 dark:border-gray-800 tracking-tight">
             <InlineMarkdown text={trimmed.slice(3)} />
           </h2>
         );
@@ -339,7 +364,7 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       }
       if (trimmed.startsWith("# ")) {
         elements.push(
-          <h1 key={`h1_${i}`} className="text-lg font-bold text-gray-900 dark:text-white mt-5 mb-2.5 pb-1.5 border-b border-gray-100 dark:border-gray-800">
+          <h1 key={`h1_${i}`} className="text-[17px] font-bold text-gray-900 dark:text-white mt-5 mb-2.5 pb-1.5 border-b border-gray-200/80 dark:border-gray-800 tracking-tight">
             <InlineMarkdown text={trimmed.slice(2)} />
           </h1>
         );
@@ -348,12 +373,17 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       }
     }
 
-    // 5. 无序列表 (- 或 *)
-    if (/^[-*]\s+/.test(trimmed)) {
-      const listContent = trimmed.replace(/^[-*]\s+/, "");
+    // 6. 缩进层级检测 (用于支持类似图二中的 2级/3级 嵌套列表)
+    const indentMatch = line.match(/^(\s*)/);
+    const indentSpaces = indentMatch ? indentMatch[1].length : 0;
+    const indentMarginClass = indentSpaces >= 4 ? "ml-6" : indentSpaces >= 2 ? "ml-3.5" : "ml-0.5";
+
+    // 7. 无序列表 (- 或 * 或 •) 间距 4~8px (my-1.5 ≈ 6px)
+    if (/^[-*•]\s+/.test(trimmed)) {
+      const listContent = trimmed.replace(/^[-*•]\s+/, "");
       elements.push(
-        <div key={`li_${i}`} className="flex items-start gap-2 my-1.5 ml-1 text-sm leading-[1.75] text-gray-800 dark:text-gray-200">
-          <span className="text-gray-400 font-bold shrink-0 text-xs select-none leading-none mt-1.5">•</span>
+        <div key={`li_${i}`} className={`flex items-start gap-2 my-1.5 ${indentMarginClass} text-[13.5px] leading-[1.7] text-gray-800 dark:text-gray-200 font-sans`}>
+          <span className="text-blue-500 dark:text-blue-400 font-bold shrink-0 text-sm select-none leading-none mt-1">•</span>
           <div className="flex-1 min-w-0">
             <InlineMarkdown text={listContent} />
           </div>
@@ -363,12 +393,12 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       continue;
     }
 
-    // 6. 有序列表 (如 1. 2.)
+    // 8. 有序列表 (如 1. 2.) 间距 4~8px
     const numMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
     if (numMatch) {
       elements.push(
-        <div key={`numli_${i}`} className="flex items-start gap-1.5 my-1.5 ml-1 text-sm leading-[1.75] text-gray-800 dark:text-gray-200">
-          <span className="font-semibold text-gray-500 dark:text-gray-400 shrink-0 select-none">
+        <div key={`numli_${i}`} className={`flex items-start gap-1.5 my-1.5 ${indentMarginClass} text-[13.5px] leading-[1.7] text-gray-800 dark:text-gray-200 font-sans`}>
+          <span className="font-semibold text-blue-600 dark:text-blue-400 shrink-0 font-mono text-[12.5px] select-none">
             {numMatch[1]}.
           </span>
           <div className="flex-1 min-w-0">
@@ -380,10 +410,10 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       continue;
     }
 
-    // 7. 引用块 (> )
+    // 9. 引用块 (> ) 左侧 3px 实线边框，微暗背景
     if (trimmed.startsWith("> ")) {
       elements.push(
-        <blockquote key={`bq_${i}`} className="my-2.5 pl-3.5 border-l-2 border-blue-500/70 text-gray-600 dark:text-gray-400 text-sm italic bg-blue-50/20 dark:bg-[#1a1d28]/30 py-1.5 rounded-r-lg">
+        <blockquote key={`bq_${i}`} className="my-3 pl-3.5 pr-3 py-2 border-l-[3px] border-blue-500 dark:border-blue-400 text-gray-600 dark:text-gray-300 text-[13.5px] italic bg-blue-50/25 dark:bg-[#181c28]/70 leading-relaxed rounded-r-md">
           <InlineMarkdown text={trimmed.slice(2)} />
         </blockquote>
       );
@@ -391,9 +421,9 @@ const TextLinesRenderer: React.FC<{ rawText: string }> = ({ rawText }) => {
       continue;
     }
 
-    // 8. 普通段落 (对标图一：14px 正文字号，1.75 舒适行距)
+    // 10. 普通段落 (line-height: 1.7，段落之间留出约 12px 的下边距即 mb-3)
     elements.push(
-      <p key={`p_${i}`} className="leading-[1.75] my-2 text-sm text-gray-800 dark:text-gray-200 select-text">
+      <p key={`p_${i}`} className={`leading-[1.7] mt-1 mb-3 ${indentMarginClass} text-[13.5px] text-gray-800 dark:text-gray-200 font-sans select-text`}>
         <InlineMarkdown text={trimmed} />
       </p>
     );
@@ -733,6 +763,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
   // 就地原地编辑提问状态 (对标需求 2：点击编辑后直接在气泡处展开编辑并重新发送此轮)
   const [isEditing, setIsEditing] = useState(false);
+  const [isPromptExpanded, setIsPromptExpanded] = useState(false);
 
   // 当智能体进入执行态时，强制关闭编辑态，确保界面干净无竞争 (对标需求 5)
   useEffect(() => {
@@ -892,13 +923,38 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 </div>
               )}
 
-              {turn.user_prompt && (
-                <div className="bg-[#f0f4f9] dark:bg-[#1f222e] text-gray-800 dark:text-gray-100 rounded-xl px-3.5 py-1.5 text-sm leading-normal shadow-2xs border border-gray-200/60 dark:border-gray-800 min-w-[48px] min-h-[30px] inline-flex items-center justify-center">
-                  <div className={`whitespace-pre-wrap break-words w-full ${turn.user_prompt.trim().length <= 4 && !turn.user_prompt.includes("\n") ? "text-center font-medium" : "text-left"}`}>
-                    {turn.user_prompt}
+              {turn.user_prompt && (() => {
+                const isLongPrompt = turn.user_prompt.length > 150 || turn.user_prompt.split("\n").length > 3;
+                return (
+                  <div className="flex flex-col items-end max-w-full">
+                    <div className={`relative bg-[#f0f4f9] dark:bg-[#1f222e] text-gray-800 dark:text-gray-100 rounded-xl px-3.5 py-2 text-sm leading-relaxed shadow-2xs border border-gray-200/60 dark:border-gray-800 min-w-[48px] max-w-2xl select-text transition-all duration-200 ${
+                      isLongPrompt && !isPromptExpanded ? "max-h-[110px] overflow-hidden" : "max-h-none"
+                    }`}>
+                      <div className={`whitespace-pre-wrap break-words w-full ${turn.user_prompt.trim().length <= 4 && !turn.user_prompt.includes("\n") ? "text-center font-medium" : "text-left"}`}>
+                        {turn.user_prompt}
+                      </div>
+
+                      {/* 长文本折叠时的平滑渐变蒙层 */}
+                      {isLongPrompt && !isPromptExpanded && (
+                        <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-[#f0f4f9] dark:from-[#1f222e] via-[#f0f4f9]/85 dark:via-[#1f222e]/85 to-transparent pointer-events-none rounded-b-xl" />
+                      )}
+                    </div>
+
+                    {/* 长文本展开/收起切换按钮 */}
+                    {isLongPrompt && (
+                      <button
+                        type="button"
+                        onClick={() => setIsPromptExpanded(!isPromptExpanded)}
+                        className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11.5px] font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition cursor-pointer select-none self-end"
+                        title={isPromptExpanded ? "收起提示词" : "展开完整提示词"}
+                      >
+                        <span>{isPromptExpanded ? "收起" : "展开全部"}</span>
+                        {isPromptExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </button>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

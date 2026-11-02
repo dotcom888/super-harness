@@ -259,6 +259,7 @@ def scan_project_sessions(proj_dir: Path) -> List[Dict[str, Any]]:
 
         turn_count = 0
         current_goal = ""
+        has_user_message = False
         mtime = f.stat().st_mtime
 
         try:
@@ -279,10 +280,12 @@ def scan_project_sessions(proj_dir: Path) -> List[Dict[str, Any]]:
                         elif t in ("session_cleared", "session_reset"):
                             turn_count = 0
                             current_goal = ""
-                        elif t == "user_message" and not current_goal:
-                            content = row.get("data", {}).get("content", "")
-                            if content:
-                                current_goal = content[:28] + ("..." if len(content) > 28 else "")
+                        elif t == "user_message":
+                            has_user_message = True
+                            if not current_goal:
+                                content = row.get("data", {}).get("content", "")
+                                if content:
+                                    current_goal = content[:28] + ("..." if len(content) > 28 else "")
                     except Exception:
                         pass
         except Exception:
@@ -299,19 +302,23 @@ def scan_project_sessions(proj_dir: Path) -> List[Dict[str, Any]]:
         else:
             time_ago = "1个月"
 
-        # 仅当会话包含有效完成轮次或自定义标题时才作为历史会话返回；若轮次已归零且非 default 会话，物理删除磁盘文件
-        if turn_count == 0 and sid not in custom_titles and sid != "default":
-            try:
-                f.unlink()
-            except Exception:
-                pass
+        # 综合判定有效轮次：若包含 user_message，即使当前 turn 仍在流式响应中也必须立刻作为有效会话呈现
+        effective_turn_count = max(turn_count, 1 if has_user_message else 0)
+
+        # 仅当会话完全没有轮次且没有任何用户输入时，才作为空会话清理；若刚创建不久 (60s 内) 也坚决保护
+        if effective_turn_count == 0 and sid not in custom_titles and sid != "default":
+            if diff_sec > 60:
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
             continue
 
         is_pinned = sid in pinned_sids
         display_title = custom_titles.get(sid) or current_goal or sid
         sessions.append({
             "session_id": sid,
-            "turn_count": turn_count,
+            "turn_count": effective_turn_count,
             "current_goal": display_title,
             "time_ago": time_ago,
             "is_active": sid == "default",
@@ -587,6 +594,8 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
                     turn_start_times[tid] = float(data["start_time"])
                 if "elapsed" in data and float(data["elapsed"]) > 0:
                     turns_map[tid]["elapsed"] = round(float(data["elapsed"]), 1)
+                if data.get("user_prompt") and not turns_map[tid]["user_prompt"]:
+                    turns_map[tid]["user_prompt"] = data["user_prompt"]
                 wm = data.get("working_memory", {})
                 working_memory_last = wm
                 if wm.get("current_goal") and not turns_map[tid]["user_prompt"]:
