@@ -63,6 +63,8 @@ def get_os_environment_context() -> str:
     if os_name == "Windows":
         guidance.append("- 当前宿主机系统为 Windows，路径分隔符建议使用反斜杠或跨平台正斜杠；")
         guidance.append("- 严禁使用 Linux 专有 Shell 语法：如 'export VAR=val'（应使用 set 或 powershell $env:VAR），避免 'rm -rf'、'cat' 或 'source .venv/bin/activate'；")
+        guidance.append("- 严禁在 run_shell 中使用 'python -c' 执行包含多行、缩进或复杂引号的脚本（Windows 控制台极易发生引号转义破坏导致 SyntaxError 死循环）；若需执行 Python 脚本，必须先调用 write_file 写入 .py 文件后再调用 run_shell 运行；")
+        guidance.append("- 对于'在桌面生成HTML/小游戏/网页文件'等纯代码或前端生成任务，应直接调用 write_file 一步到位将完整可运行代码写入目标路径（如 Desktop 路径），严禁在终端尝试复杂推导或反复死磕；")
         guidance.append("- 优先使用 Agent 内置安全工具（read_file / grep_text / find_by_name 等）代替终端原生管道命令。")
     else:
         guidance.append(f"- 当前宿主机系统为 POSIX ({os_name})，支持标准 Shell 语法与 Unix 管道。")

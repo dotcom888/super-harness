@@ -16,6 +16,7 @@ class TurnChunk:
         self.start_time: float = start_time if start_time is not None else time.time()
         self.end_time: Optional[float] = None
         self.elapsed: float = 0.0
+        self.critic: Optional[Dict[str, Any]] = None
 
     def add_message(self, msg: Dict[str, Any]):
         self.messages.append(msg)

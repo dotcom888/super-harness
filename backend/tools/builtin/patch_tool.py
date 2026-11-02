@@ -66,13 +66,32 @@ def _validate_patch_target(target_path_str: str) -> Path:
     else:
         resolved = target.resolve()
 
-    # 1. 沙箱越界校验
+    # 1. 沙箱越界校验（允许当前工作区以及用户桌面合法输出目录）
+    is_safe = False
     try:
         relative_path = resolved.relative_to(root)
+        is_safe = True
     except ValueError:
-        raise PermissionError(
-            f"【安全拦截】：目标路径 '{target_path_str}' 越出工作区范围，禁止写入！"
+        try:
+            from tools.framework.workspace import get_user_desktop_dir
+            relative_path = resolved.relative_to(get_user_desktop_dir())
+            is_safe = True
+        except Exception:
+            pass
+
+    if not is_safe:
+        from tools.framework.policies import default_policy
+        is_approved = default_policy.request_approval(
+            f"patch_file(file_path='{target_path_str}')",
+            f"目标路径超出当前工作区与桌面范围。是否允许对外部文件 '{target_path_str}' 应用代码补丁？",
+            force_ask=True
         )
+        if is_approved:
+            is_safe = True
+        else:
+            raise PermissionError(
+                f"【用户拒绝授权】：目标路径 '{target_path_str}' 超出允许的工作区范围，用户未批准外部修改操作！"
+            )
 
     # 2. 敏感黑名单拦截
     for part in resolved.parts:

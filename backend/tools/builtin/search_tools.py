@@ -61,9 +61,19 @@ def _validate_search_dir(directory: str = ".") -> Path:
     else:
         resolved = target.resolve()
 
+    is_safe = False
     try:
         resolved.relative_to(root)
+        is_safe = True
     except ValueError:
+        try:
+            from tools.framework.workspace import get_user_desktop_dir
+            resolved.relative_to(get_user_desktop_dir())
+            is_safe = True
+        except Exception:
+            pass
+
+    if not is_safe:
         raise PermissionError(
             f"【安全拦截】：搜索路径越界！路径 '{directory}' 超出工作区范围 ({root})。"
         )

@@ -44,39 +44,76 @@ def __getattr__(name: str):
         return default_workspace.root
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-def _validate_safe_path(target_path_str: str) -> Path:
-    """
-    核心安全边界校验器：
-    1. 解析并规范化绝对路径；
-    2. 校验目标路径是否严格限制在当前动态工作区范围以内；
-    3. 校验文件名和路径层级是否命中敏感黑名单。
-    """
+def _resolve_target_path(target_path_str: str) -> Path:
     target = Path(target_path_str)
     root = default_workspace.root
     if not target.is_absolute():
         resolved = (root / target).resolve()
-        # 兼容源码归集入 backend/ 后的相对路径访问
         if not resolved.exists() and (root / "backend" / target).exists():
             resolved = (root / "backend" / target).resolve()
     else:
         resolved = target.resolve()
+    return resolved
 
-    # 安全检查 1：沙箱隔离校验
-    try:
-        resolved.relative_to(root)
-    except ValueError:
-        raise PermissionError(
-            f"【安全拦截】：访问路径越界！路径 '{target_path_str}' 超出了允许的安全工作区范围 ({root})。"
-        )
-
-    # 安全检查 2：敏感文件黑名单拦截
+def _validate_safe_read_path(target_path_str: str) -> Path:
+    """
+    只读安全校验器（广域只读放行 + 敏感凭据黑名单）：
+    允许 Agent 安全查阅磁盘上任何非敏感文件与参考代码，严禁读取密钥凭据。
+    """
+    resolved = _resolve_target_path(target_path_str)
     for part in resolved.parts:
         if part in SENSITIVE_PATTERNS:
             raise PermissionError(
                 f"【安全拦截】：禁止读取敏感文件或受保护目录 '{part}'！"
             )
+    return resolved
+
+def _validate_safe_write_path(target_path_str: str) -> Path:
+    """
+    写入安全校验器（工作区沙箱锁定 + 桌面放行 + 超界审批交互卡片）：
+    1. 工作区内部及用户桌面（Desktop）：直接安全放行；
+    2. 超出上述范围的高危外部写入：即使处于 AUTO 模式，也强制弹出审批卡片由用户人工裁决；
+    3. 严禁修改凭据黑名单与智能体核心引擎源码。
+    """
+    resolved = _resolve_target_path(target_path_str)
+    root = default_workspace.root
+
+    for part in resolved.parts:
+        if part in SENSITIVE_PATTERNS:
+            raise PermissionError(
+                f"【安全拦截】：禁止修改敏感文件或受保护目录 '{part}'！"
+            )
+
+    is_safe = False
+    try:
+        resolved.relative_to(root)
+        is_safe = True
+    except ValueError:
+        try:
+            from tools.framework.workspace import get_user_desktop_dir
+            resolved.relative_to(get_user_desktop_dir())
+            is_safe = True
+        except Exception:
+            pass
+
+    if not is_safe:
+        from tools.framework.policies import default_policy
+        is_approved = default_policy.request_approval(
+            f"write_file(file_path='{target_path_str}')",
+            f"目标路径超出当前工作区与桌面范围。是否允许写入外部路径 '{target_path_str}'？",
+            force_ask=True
+        )
+        if is_approved:
+            is_safe = True
+        else:
+            raise PermissionError(
+                f"【用户拒绝授权】：目标路径 '{target_path_str}' 超出允许的工作区范围，用户未批准外部写入操作！"
+            )
 
     return resolved
+
+def _validate_safe_path(target_path_str: str) -> Path:
+    return _validate_safe_write_path(target_path_str)
 
 @register_tool(
     name="read_file",
@@ -93,7 +130,7 @@ def _validate_safe_path(target_path_str: str) -> Path:
 def read_file(file_path: str, start_line: int = 1, max_lines: int = 300) -> str:
     """带四重安全防线的文件读取工具"""
     try:
-        safe_path = _validate_safe_path(file_path)
+        safe_path = _validate_safe_read_path(file_path)
 
         if not safe_path.exists():
             return f"读取失败: 文件 '{file_path}' 不存在。"
@@ -169,7 +206,7 @@ def read_file(file_path: str, start_line: int = 1, max_lines: int = 300) -> str:
 def list_files(directory: str = ".") -> str:
     """安全列出目录内容"""
     try:
-        safe_path = _validate_safe_path(directory)
+        safe_path = _validate_safe_read_path(directory)
 
         if not safe_path.exists():
             return f"列出文件失败: 目录 '{directory}' 不存在。"
@@ -314,12 +351,16 @@ def _check_python_syntax(file_path: Path, content: str) -> str:
 def write_file(file_path: str, content: str) -> str:
     """安全覆盖写入或创建文件，写前自动触发物理磁盘快照"""
     try:
-        safe_path = _validate_safe_path(file_path)
+        safe_path = _validate_safe_write_path(file_path)
         root = default_workspace.root
         try:
             norm_rel = safe_path.relative_to(root).as_posix()
         except ValueError:
-            return f"【安全拦截】：目标路径 '{file_path}' 越出工作区范围，禁止写入！"
+            from tools.framework.workspace import get_user_desktop_dir
+            try:
+                norm_rel = safe_path.relative_to(get_user_desktop_dir()).as_posix()
+            except ValueError:
+                return f"【安全拦截】：目标路径 '{file_path}' 越出工作区范围，禁止写入！"
 
         if default_workspace.root.resolve() != AGENT_SOURCE_ROOT.resolve():
             try:

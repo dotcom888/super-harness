@@ -83,10 +83,15 @@ class WorkspaceContext:
         return p.resolve()
 
     def is_inside(self, path: Union[str, Path]) -> bool:
-        """校验目标路径是否严格限制在当前工作区内"""
+        """校验目标路径是否允许访问（在当前工作区内，或在用户桌面等合法输出区）"""
         resolved = self.resolve_path(path)
         try:
             resolved.relative_to(self.root)
+            return True
+        except ValueError:
+            pass
+        try:
+            resolved.relative_to(get_user_desktop_dir())
             return True
         except ValueError:
             return False
@@ -107,6 +112,26 @@ def get_workspace_root() -> Path:
 
 def set_workspace_root(root_dir: Union[str, Path]) -> Path:
     return default_workspace.set_root(root_dir)
+
+def get_user_desktop_dir() -> Path:
+    """获取用户桌面真实物理目录（支持 Windows 注册表重定向/OneDrive 路径）"""
+    import sys
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, 
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+            )
+            val, _ = winreg.QueryValueEx(key, "Desktop")
+            winreg.CloseKey(key)
+            expanded = os.path.expandvars(val)
+            p = Path(expanded).resolve()
+            if p.exists() and p.is_dir():
+                return p
+        except Exception:
+            pass
+    return (Path.home() / "Desktop").resolve()
 
 def atomic_write_text(path: Union[str, Path], content: str, encoding: str = "utf-8") -> None:
     """

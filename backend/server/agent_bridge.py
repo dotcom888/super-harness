@@ -101,6 +101,13 @@ class StreamingToolExecutor(ToolExecutor):
             "args": parsed_args,
             "timestamp": time.time()
         })
+        self.event_emitter({
+            "event": "agent_status",
+            "stage": "tool",
+            "tool": func_name,
+            "message": f"正在执行工具: {meta['display']} {meta['desc']}",
+            "timestamp": time.time()
+        })
 
         start_time = time.time()
         func_name, args_str, msg = super()._execute_single(tc)
@@ -196,6 +203,12 @@ class AgentBridge:
                 ag._resolved_proto = final_proto
                 from core.client_utils import create_resilient_openai_client
                 ag.client = create_resilient_openai_client(api_key=final_key, base_url=ag.base_url)
+                if hasattr(ag, "planner") and ag.planner:
+                    ag.planner.client = ag.client
+                    ag.planner.model = ag.model
+                if hasattr(ag, "critic") and ag.critic:
+                    ag.critic.client = ag.client
+                    ag.critic.model = ag.model
                 logger.info(f"Hot-reloaded agent client for session '{key}' to model '{target_model}' with baseUrl '{ag.base_url}'")
             return ag
 
@@ -912,8 +925,8 @@ class AgentBridge:
                         "image_url": {"url": d_url}
                     })
 
-            def ask_approval_callback(cmd: str, rsn: str) -> bool:
-                if default_policy.mode in ("auto", "never") or default_policy.session_approved:
+            def ask_approval_callback(cmd: str, rsn: str, force_ask: bool = False) -> bool:
+                if not force_ask and (default_policy.mode in ("auto", "never") or default_policy.session_approved):
                     return True
                 ticket_id = f"ticket_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
                 done_evt = threading.Event()
@@ -971,6 +984,47 @@ class AgentBridge:
             default_policy.approval_callback = ask_approval_callback
             set_user_interaction_handler(handle_user_interaction)
 
+            # 多智能体协同状态追踪
+            active_tasks_list: List[Dict[str, Any]] = []
+
+            def on_task_plan(planned_tasks: List[Dict[str, Any]]):
+                nonlocal active_tasks_list
+                active_tasks_list = planned_tasks
+                wrapped_callback({
+                    "event": "task_plan",
+                    "tasks": planned_tasks,
+                    "timestamp": time.time()
+                })
+
+            def on_task_progress(task_id: str, completed: bool):
+                for t in active_tasks_list:
+                    if t.get("id") == task_id:
+                        t["completed"] = completed
+                wrapped_callback({
+                    "event": "task_progress",
+                    "task_id": task_id,
+                    "completed": completed,
+                    "timestamp": time.time()
+                })
+
+            active_critic_data: Optional[Dict[str, Any]] = None
+
+            def on_critic_event(critic_data: Dict[str, Any]):
+                nonlocal active_critic_data
+                active_critic_data = critic_data
+                wrapped_callback({
+                    "event": "critic_event",
+                    "critic": critic_data,
+                    "timestamp": time.time()
+                })
+
+            def on_agent_status(status_info: Dict[str, Any]):
+                wrapped_callback({
+                    "event": "agent_status",
+                    **status_info,
+                    "timestamp": time.time()
+                })
+
             # 在独立工作线程中运行该专属 Agent 的 run() 并挂接流式 Token 回调与实时思考回调
             try:
                 def _run_agent_isolated():
@@ -987,7 +1041,11 @@ class AgentBridge:
                             thought_callback=on_thought_chunk,
                             attachments=attachments,
                             display_prompt=prompt,
-                            llm_content=llm_content
+                            llm_content=llm_content,
+                            task_callback=on_task_plan,
+                            task_progress_callback=on_task_progress,
+                            critic_callback=on_critic_event,
+                            status_callback=on_agent_status
                         )
                     finally:
                         try:
@@ -1014,14 +1072,16 @@ class AgentBridge:
                     if t_list:
                         final_thought = "\n\n".join(t_list)
 
-                # 最终答复确认推送 (包含真实耗时 elapsed、思考内容 thought 与当前运行安全模式)
+                # 最终答复确认推送 (包含真实耗时 elapsed、思考内容 thought、任务计划与当前运行安全模式)
                 wrapped_callback({
                     "event": "assistant_response",
                     "content": result,
                     "thought": final_thought,
                     "elapsed": elapsed_total,
                     "timestamp": time.time(),
-                    "permission_mode": getattr(default_policy, "mode", "auto")
+                    "permission_mode": getattr(default_policy, "mode", "auto"),
+                    "tasks": active_tasks_list,
+                    "critic": active_critic_data
                 })
             except Exception as run_err:
                 logger.error(f"Error running agent for prompt: {run_err}", exc_info=True)

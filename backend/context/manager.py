@@ -537,6 +537,15 @@ class ContextManager:
             self.current_turn.add_message(tool_msg)
             self._append_to_disk("tool_result", tool_msg)
 
+    def record_critic(self, critic_data: Dict[str, Any]):
+        """持久化保存后置 Critic 智能体审查结果并同步写入磁盘"""
+        if self.current_turn:
+            self.current_turn.critic = critic_data
+            self._append_to_disk("critic_result", {
+                "turn_id": self.current_turn.turn_id,
+                "critic": critic_data
+            })
+
     def finish_current_turn(self, elapsed: Optional[float] = None):
         if self.current_turn:
             self.current_turn.sanitize_unpaired_calls()
@@ -560,6 +569,7 @@ class ContextManager:
                     if m.get("role") == "user" and m.get("content"):
                         u_prompt = m["content"]
                         break
+            critic_data = getattr(self.current_turn, "critic", None)
             self._append_to_disk("turn_finished", {
                 "turn_id": self.current_turn.turn_id,
                 "user_prompt": u_prompt,
@@ -567,7 +577,8 @@ class ContextManager:
                 "start_time": self.current_turn.start_time,
                 "end_time": self.current_turn.end_time,
                 "working_memory": snapshot["working_memory"],
-                "summary_state": snapshot["summary_state"]
+                "summary_state": snapshot["summary_state"],
+                "critic": critic_data
             })
             self.current_turn = None
             self.auto_vacuum_if_needed()

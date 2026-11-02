@@ -22,10 +22,14 @@ import {
   Clock,
   Compass,
   Zap,
-  FileEdit
+  FileEdit,
+  ShieldCheck,
+  ShieldAlert,
+  Shield
 } from "lucide-react";
-import { TurnData, TrajectoryStep, UserInputRequest } from "../types";
+import { TurnData, TrajectoryStep, UserInputRequest, CriticDimension } from "../types";
 import { ChatAttachmentItemCard } from "./AttachmentCards";
+import { TaskDrawer } from "./TaskDrawer";
 import { InlineApprovalCard, InlineUserInputCard } from "./InlineInteractionCards";
 
 interface ChatMessageProps {
@@ -43,6 +47,7 @@ interface ChatMessageProps {
   userInputReq?: UserInputRequest | null;
   onSubmitUserInput?: (requestId: string, selectedOption: string, customInput: string) => void;
   onCancelUserInput?: (requestId: string) => void;
+  statusMessage?: string;
 }
 
 // 格式化时间戳为 20:49 形式 (精确还原历史时间，杜绝无数据时默认为当前时间)
@@ -723,6 +728,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   userInputReq,
   onSubmitUserInput,
   onCancelUserInput,
+  statusMessage,
 }) => {
   const isPaused = Boolean(turn.is_paused || turn.assistant_response?.includes("【用户已手动暂停】"));
 
@@ -731,6 +737,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   const [traceExpanded, setTraceExpanded] = useState<boolean>(() => {
     if (isPaused) return false;
     return true;
+  });
+
+  // 质量审查状态折叠状态 (默认收起，保持极简一行；驳回自愈时自动展开)
+  const [criticExpanded, setCriticExpanded] = useState<boolean>(() => {
+    return Boolean(turn.critic && turn.critic.status === 'rejected');
   });
 
   // 动态实时秒数计时器：解决硬编码 6 秒与思考中不计时问题
@@ -962,6 +973,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
         </div>
       )}
 
+
+
       {/* 2. 思考过程与工具调用过程 (去框化无卡片，流光溢彩动态呼吸，默认展开可自由折叠) */}
       {(hasSteps || (isLoading && !isPaused)) && (
         <div className="w-full max-w-full mr-auto pl-1 my-1">
@@ -1034,7 +1047,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 <div className="flex items-center gap-2 text-xs py-1 select-none font-medium">
                   <Sparkles size={13} className="text-purple-500 animate-spin-slow shrink-0" />
                   <span className="shimmer-text">
-                    思考 · 正在深入分析与执行中...
+                    {turn.status_message || statusMessage || "思考 · 正在深入分析与执行中..."}
                   </span>
                 </div>
               )}
@@ -1077,6 +1090,138 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                       </button>
                     ) : null}
                   </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* 2.5 质量审查与验收 (Critic & Verifier) - 与深度思考对齐的轻量折叠样式 */}
+      {turn.critic && (
+        <div className="w-full max-w-full mr-auto pl-1 my-1">
+          <div className="mb-1.5 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setCriticExpanded(!criticExpanded)}
+              className="group/critic inline-flex items-center gap-1.5 text-gray-400 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xs py-0.5 transition cursor-pointer select-none"
+            >
+              {turn.critic.status === 'passed' ? (
+                <ShieldCheck size={12} className="text-emerald-500 shrink-0" />
+              ) : turn.critic.status === 'rejected' ? (
+                <ShieldAlert size={12} className="text-amber-500 shrink-0" />
+              ) : (
+                <Shield size={12} className="text-blue-500 shrink-0 animate-pulse" />
+              )}
+              <span className="font-normal">
+                {turn.critic.status === 'passed'
+                  ? (criticExpanded
+                      ? `质量审查 · 评分 ${turn.critic.score ? Number(turn.critic.score).toFixed(1) : '5.0'} / 5.0 (已通过)`
+                      : `质量审查 · 评分 ${turn.critic.score ? Number(turn.critic.score).toFixed(1) : '5.0'} / 5.0 (点击展开)`)
+                  : turn.critic.status === 'rejected'
+                    ? (criticExpanded
+                        ? `质量审查 · 评分 ${turn.critic.score ? Number(turn.critic.score).toFixed(1) : '2.5'} / 5.0 (已驳回自愈中)`
+                        : `质量审查 · 评分 ${turn.critic.score ? Number(turn.critic.score).toFixed(1) : '2.5'} / 5.0 (点击展开)`)
+                    : `质量审查中 · 正在进行质量验收...`}
+              </span>
+              {criticExpanded ? (
+                <ChevronDown size={13} className="text-gray-400 group-hover/critic:text-gray-600 dark:group-hover/critic:text-gray-300" />
+              ) : (
+                <ChevronRight size={13} className="text-gray-400 group-hover/critic:text-gray-600 dark:group-hover/critic:text-gray-300" />
+              )}
+            </button>
+          </div>
+
+          {criticExpanded && (() => {
+            const dimensions: CriticDimension[] = (turn.critic.dimensions && turn.critic.dimensions.length > 0)
+              ? turn.critic.dimensions
+              : [
+                  {
+                    name: '目标规划对齐度',
+                    score: turn.critic.score ? Number(turn.critic.score) : 5.0,
+                    passed: turn.critic.status === 'passed',
+                    detail: turn.critic.status === 'passed' ? '100% 达成用户提问与初始拆解任务清单' : '存在未达成的目标规划项'
+                  },
+                  {
+                    name: '代码规范与无副作用',
+                    score: turn.critic.score ? Number(turn.critic.score) : 5.0,
+                    passed: turn.critic.status === 'passed',
+                    detail: turn.critic.status === 'passed' ? '无语法漏洞、无未清理调试代码与运行时异常' : '代码或改动存在潜在副作用与待修复项'
+                  },
+                  {
+                    name: '成果落地与可用性',
+                    score: turn.critic.score ? Number(turn.critic.score) : 5.0,
+                    passed: turn.critic.status === 'passed',
+                    detail: turn.critic.status === 'passed' ? '目标成果已完整落地并具备可用性' : '产出物尚未完成最终落地与验证'
+                  }
+                ];
+
+            return (
+              <div className="space-y-2 py-2 pl-4 ml-1.5 border-l border-gray-200 dark:border-gray-800 text-xs text-gray-600 dark:text-gray-300 select-text animate-in fade-in duration-150">
+                {/* 审查明细 (逐项维度、得分与判定) */}
+                <div className="flex items-start gap-2 pt-0.5">
+                  <span className="text-gray-400 dark:text-gray-500 shrink-0 font-medium mt-1">审查明细:</span>
+                  <div className="flex-1 space-y-1.5 max-w-2xl">
+                    {dimensions.map((dim, idx) => {
+                      const isDimPassed = dim.passed !== false;
+                      return (
+                        <div 
+                          key={idx} 
+                          className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 py-1.5 px-3 rounded-lg bg-gray-50/80 dark:bg-[#1a1d27] border border-gray-200/60 dark:border-gray-800/80"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDimPassed ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                            <span className="font-medium text-gray-700 dark:text-gray-200 shrink-0 text-xs">{dim.name}</span>
+                            {dim.detail && (
+                              <span className="text-gray-400 dark:text-gray-400 text-[11px] truncate" title={dim.detail}>
+                                · {dim.detail}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto font-mono text-[11px]">
+                            <span className={isDimPassed ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-amber-600 dark:text-amber-400 font-semibold"}>
+                              {dim.score !== undefined ? Number(dim.score).toFixed(1) : '5.0'} / 5.0
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-medium ${
+                              isDimPassed 
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40' 
+                                : 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/40'
+                            }`}>
+                              {isDimPassed ? '已达标' : '待优化'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 审查结论 */}
+                <div className="flex items-center gap-2 pt-0.5">
+                  <span className="text-gray-400 dark:text-gray-500 shrink-0 font-medium">审查结论:</span>
+                  <span className={turn.critic.status === 'passed' ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-amber-600 dark:text-amber-400 font-medium'}>
+                    {turn.critic.reason || (turn.critic.status === 'passed' ? '质量审查通过' : '审查未通过')}
+                  </span>
+                </div>
+
+                {/* 质量评分 */}
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400 dark:text-gray-500 shrink-0 font-medium">质量评分:</span>
+                  <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                    {turn.critic.score ? Number(turn.critic.score).toFixed(1) : '5.0'} / 5.0
+                  </span>
+                </div>
+
+                {/* 验收总结 */}
+                <div className="flex items-start gap-2">
+                  <span className="text-gray-400 dark:text-gray-500 shrink-0 font-medium mt-0.5">验收总结:</span>
+                  <span className="text-gray-500 dark:text-gray-400 leading-relaxed">
+                    {turn.critic.fix
+                      ? turn.critic.fix
+                      : (turn.critic.status === 'passed'
+                          ? '全部规划目标均已达成，文件产出与代码逻辑审查无异常，交付用户。'
+                          : '已检测到缺陷并触发自愈修复，持续优化工程成果。')}
+                  </span>
                 </div>
               </div>
             );

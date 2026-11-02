@@ -338,19 +338,24 @@ class CommandPolicy:
         # 9. Auto 模式 (默认全自动放行)
         return PolicyDecision.ALLOW, "Auto 模式全自动放行"
 
-    def request_approval(self, command: str, reason: str) -> bool:
+    def request_approval(self, command: str, reason: str, force_ask: bool = False) -> bool:
         """
         终端交互卡片 / 桌面端 GUI 异步审批：Human-in-the-Loop 人工审核
         """
-        # 在会话已全局授权或 AUTO 模式下，直接放行，无需打扰
-        if self.session_approved:
-            return True
-        if self.mode in ("auto", "never"):
-            return True
+        # 在非强制模式下，若会话已全局授权或处于 AUTO 模式，直接放行
+        if not force_ask:
+            if self.session_approved:
+                return True
+            if self.mode in ("auto", "never"):
+                return True
 
         # 1. 优先调用注册的异步/GUI 交互审批回调 (例如 Desktop 桌面端 WebSocket 审批流)
         if getattr(self, "approval_callback", None) is not None:
             try:
+                import inspect
+                sig = inspect.signature(self.approval_callback)
+                if "force_ask" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    return bool(self.approval_callback(command, reason, force_ask=force_ask))
                 return bool(self.approval_callback(command, reason))
             except Exception as err:
                 print(f"[Policy] approval_callback 执行异常: {err}")

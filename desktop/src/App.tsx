@@ -104,7 +104,8 @@ export const App: React.FC = () => {
   const [sessionThoughtMap, setSessionThoughtMap] = useState<Record<string, string>>({});
   const [runningSessions, setRunningSessions] = useState<Record<string, boolean>>({});
   const [draftPrompt, setDraftPrompt] = useState("");
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [sessionTasksMap, setSessionTasksMap] = useState<Record<string, TaskItem[]>>({});
+  const [sessionStatusMap, setSessionStatusMap] = useState<Record<string, string>>({});
   const [activeTurnId, setActiveTurnId] = useState<number | null>(null);
   const scrollSpyRafRef = useRef<number | null>(null);
 
@@ -119,6 +120,8 @@ export const App: React.FC = () => {
   const currentTerminalOutputs = sessionTerminalOutputsMap[currentSessionKey] || {};
 
   const turns = sessionTurnsMap[currentSessionKey] || [];
+  const currentSessionTasks = sessionTasksMap[currentSessionKey] || (turns.length > 0 ? (turns[turns.length - 1]?.tasks || []) : []);
+  const currentSessionStatus = sessionStatusMap[currentSessionKey] || (turns.length > 0 ? turns[turns.length - 1]?.status_message : undefined);
 
   useEffect(() => {
     if (turns.length > 0) {
@@ -684,7 +687,9 @@ export const App: React.FC = () => {
                   thought: isLatestRunningTurn
                     ? (memoryTurn.thought || "")
                     : (dTurn.thought || memoryTurn.thought || ""),
-                  steps: (memoryTurn.steps && memoryTurn.steps.length > 0) ? memoryTurn.steps : (dTurn.steps || [])
+                  steps: (memoryTurn.steps && memoryTurn.steps.length > 0) ? memoryTurn.steps : (dTurn.steps || []),
+                  critic: dTurn.critic || memoryTurn?.critic,
+                  tasks: (dTurn.tasks && dTurn.tasks.length > 0) ? dTurn.tasks : (memoryTurn?.tasks || [])
                 };
               }
               return dTurn;
@@ -695,7 +700,13 @@ export const App: React.FC = () => {
             ...prev,
             [key]: data.all_actions || []
           }));
-          setTasks(data.tasks || []);
+          const lastTurnData = (data.turns && data.turns.length > 0) ? data.turns[data.turns.length - 1] : null;
+          if (lastTurnData?.tasks && lastTurnData.tasks.length > 0) {
+            setSessionTasksMap((prev) => ({
+              ...prev,
+              [key]: lastTurnData.tasks
+            }));
+          }
 
           // 智能提取有效提问与标题：优先保留现有良好命名或首个非空提问，杜绝丢失标题
           const validTurn = (data.turns || []).find((t: any) => t.user_prompt && t.user_prompt.trim());
@@ -744,7 +755,16 @@ export const App: React.FC = () => {
           });
           if (force) {
             setSessionActionsMap((prev) => ({ ...prev, [key]: [] }));
-            setTasks([]);
+            setSessionTasksMap((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+            setSessionStatusMap((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
             setHasStarted(false);
           }
           setSessionTurnsMap((prev) => {
@@ -845,6 +865,23 @@ export const App: React.FC = () => {
               if (targetKey === getSessionKey(projectNameRef.current, activeSessionIdRef.current)) {
                 autoScrollIfAtBottom();
               }
+            } else if (payload.event === "agent_status") {
+              const statusMsg = payload.message || "";
+              setSessionStatusMap((prev) => ({ ...prev, [targetKey]: statusMsg }));
+              setSessionTurnsMap((prev) => {
+                const list = prev[targetKey] || [];
+                if (list.length === 0) return prev;
+                const lastIdx = list.length - 1;
+                const updated = [...list];
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  status_message: statusMsg
+                };
+                return { ...prev, [targetKey]: updated };
+              });
+              if (targetKey === getSessionKey(projectNameRef.current, activeSessionIdRef.current)) {
+                autoScrollIfAtBottom();
+              }
             } else if (payload.event === "tool_start" || payload.event === "tool_call_start") {
               const newAction: ToolAction = {
                 id: payload.id || payload.tool_call_id || `act_${Date.now()}`,
@@ -872,6 +909,9 @@ export const App: React.FC = () => {
                 status: "running",
                 timestamp: Date.now()
               };
+              const toolStatusMsg = `正在执行工具: ${newAction.display} ${newAction.desc}`.trim();
+              setSessionStatusMap((prev) => ({ ...prev, [targetKey]: toolStatusMsg }));
+
               if (targetKey === getSessionKey(projectNameRef.current, activeSessionIdRef.current)) {
                 autoScrollIfAtBottom();
               }
@@ -885,12 +925,14 @@ export const App: React.FC = () => {
                 updated[lastIdx] = {
                   ...curTurn,
                   actions: [...(curTurn.actions || []), newAction],
-                  steps: [...curSteps, toolStep]
+                  steps: [...curSteps, toolStep],
+                  status_message: toolStatusMsg
                 };
                 return { ...prev, [targetKey]: updated };
               });
             } else if (payload.event === "tool_end" || payload.event === "tool_call_finished") {
               const tcId = payload.id || payload.tool_call_id;
+              setSessionStatusMap((prev) => ({ ...prev, [targetKey]: "正在评估工具执行结果并思考下一步..." }));
               setSessionActionsMap((prev) => ({
                 ...prev,
                 [targetKey]: (prev[targetKey] || []).map((act) =>
@@ -974,9 +1016,60 @@ export const App: React.FC = () => {
               if (targetKey === getSessionKey(projectNameRef.current, activeSessionIdRef.current)) {
                 autoScrollIfAtBottom();
               }
+            } else if (payload.event === "task_plan") {
+              const newTasks = payload.tasks || [];
+              setSessionTasksMap((prev) => ({ ...prev, [targetKey]: newTasks }));
+              setSessionTurnsMap((prev) => {
+                const list = prev[targetKey] || [];
+                if (list.length === 0) return prev;
+                const updated = [...list];
+                const lastIdx = updated.length - 1;
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  tasks: newTasks
+                };
+                return { ...prev, [targetKey]: updated };
+              });
+            } else if (payload.event === "task_progress") {
+              const { task_id, completed } = payload;
+              setSessionTasksMap((prev) => ({
+                ...prev,
+                [targetKey]: (prev[targetKey] || []).map((t) => t.id === task_id ? { ...t, completed } : t)
+              }));
+              setSessionTurnsMap((prev) => {
+                const list = prev[targetKey] || [];
+                if (list.length === 0) return prev;
+                const updated = [...list];
+                const lastIdx = updated.length - 1;
+                const turnTasks = (updated[lastIdx].tasks || []).map((t) =>
+                  t.id === task_id ? { ...t, completed } : t
+                );
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  tasks: turnTasks
+                };
+                return { ...prev, [targetKey]: updated };
+              });
+            } else if (payload.event === "critic_event") {
+              const criticData = payload.critic || {};
+              setSessionTurnsMap((prev) => {
+                const list = prev[targetKey] || [];
+                if (list.length === 0) return prev;
+                const updated = [...list];
+                const lastIdx = updated.length - 1;
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  critic: criticData
+                };
+                return { ...prev, [targetKey]: updated };
+              });
             } else if (payload.event === "assistant_response") {
               // 精准释放目标会话的运行态
               setRunningSessions((prev) => ({ ...prev, [targetKey]: false }));
+              setSessionStatusMap((prev) => ({ ...prev, [targetKey]: "" }));
+              if (payload.tasks && payload.tasks.length > 0) {
+                setSessionTasksMap((prev) => ({ ...prev, [targetKey]: payload.tasks }));
+              }
 
               if (payload.content && payload.content.includes("【会话已清空】")) {
                 setSessionTurnsMap((prev) => ({ ...prev, [targetKey]: [] }));
@@ -1040,7 +1133,9 @@ export const App: React.FC = () => {
                   permission_mode: payload.permission_mode || curTurn.permission_mode,
                   start_timestamp: curTurn.start_timestamp || curTurn.timestamp,
                   completed_timestamp: asstCompletedTime,
-                  timestamp: asstCompletedTime
+                  timestamp: asstCompletedTime,
+                  tasks: (payload.tasks && payload.tasks.length > 0) ? payload.tasks : curTurn.tasks,
+                  critic: payload.critic || curTurn.critic
                 };
                 return { ...prev, [targetKey]: updated };
               });
@@ -1049,6 +1144,7 @@ export const App: React.FC = () => {
               fetchWorkspaces(projectNameRef.current, activeSessionIdRef.current, false);
             } else if (payload.event === "error") {
               setRunningSessions((prev) => ({ ...prev, [targetKey]: false }));
+              setSessionStatusMap((prev) => ({ ...prev, [targetKey]: "" }));
               const errorMsg = `❌ 模型调用异常: ${payload.message || "请求失败"}\n\n💡 检查建议: 请前往右下角「+ 添加模型」或「系统设置 -> 模型」检查当前模型配置、API 密钥与网络连接是否有效。`;
               setSessionTurnsMap((prev) => {
                 const list = prev[targetKey] || [];
@@ -1258,7 +1354,8 @@ export const App: React.FC = () => {
     text: string, 
     model: string, 
     permission: string, 
-    attachments: AttachmentItem[] = []
+    attachments: AttachmentItem[] = [],
+    replaceTurnId?: number
   ) => {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
@@ -1281,6 +1378,8 @@ export const App: React.FC = () => {
     }
 
     const targetKey = getSessionKey(projectName, activeSessionId);
+    setSessionTasksMap((prev) => ({ ...prev, [targetKey]: [] }));
+    setSessionStatusMap((prev) => ({ ...prev, [targetKey]: "正在分析意图并规划任务清单..." }));
     const isFirstTurn = !hasStarted || (sessionTurnsMap[targetKey] || []).length === 0;
 
     // 若输入快捷清空命令，重置当前会话内存
@@ -1359,27 +1458,63 @@ export const App: React.FC = () => {
         body: JSON.stringify({ project: projectName, session_id: activeSessionId })
       }).catch(() => {});
 
-      // 乐观添加新的一轮至专属隔离会话字典 (包含附件)
+      // 乐观添加或原地替换一轮至专属隔离会话字典 (包含附件)
       const curList = sessionTurnsMap[targetKey] || [];
       const nowSec = Date.now() / 1000;
-      const tempTurn: TurnData = {
-        turn_id: curList.length + 1,
-        user_prompt: text,
-        attachments: attachments,
-        thought: "正在深度思考与执行下一步排查...",
-        assistant_response: "",
-        actions: [],
-        steps: [],
-        start_timestamp: nowSec,
-        timestamp: nowSec,
-        completed_timestamp: undefined,
-        permission_mode: normalizeModeId(permission)
-      };
       delete sessionScrollMap.current[targetKey];
-      setSessionTurnsMap((prev) => ({
-        ...prev,
-        [targetKey]: [...(prev[targetKey] || []), tempTurn]
-      }));
+
+      if (replaceTurnId !== undefined) {
+        setSessionTurnsMap((prev) => {
+          const list = prev[targetKey] || [];
+          const idx = list.findIndex((t) => t.turn_id === replaceTurnId);
+          const targetTurn = idx !== -1 ? list[idx] : null;
+          const replacedTurn: TurnData = {
+            turn_id: replaceTurnId,
+            user_prompt: text,
+            attachments: attachments && attachments.length > 0 ? attachments : (targetTurn?.attachments || []),
+            thought: "正在深度思考与执行下一步排查...",
+            assistant_response: "",
+            actions: [],
+            steps: [],
+            tasks: [],
+            status_message: "正在分析意图并规划任务清单...",
+            start_timestamp: nowSec,
+            timestamp: nowSec,
+            completed_timestamp: undefined,
+            permission_mode: normalizeModeId(permission)
+          };
+          if (idx !== -1) {
+            return {
+              ...prev,
+              [targetKey]: [...list.slice(0, idx), replacedTurn]
+            };
+          }
+          return {
+            ...prev,
+            [targetKey]: [...list, replacedTurn]
+          };
+        });
+      } else {
+        const tempTurn: TurnData = {
+          turn_id: curList.length + 1,
+          user_prompt: text,
+          attachments: attachments,
+          thought: "正在深度思考与执行下一步排查...",
+          assistant_response: "",
+          actions: [],
+          steps: [],
+          tasks: [],
+          status_message: "正在分析意图并规划任务清单...",
+          start_timestamp: nowSec,
+          timestamp: nowSec,
+          completed_timestamp: undefined,
+          permission_mode: normalizeModeId(permission)
+        };
+        setSessionTurnsMap((prev) => ({
+          ...prev,
+          [targetKey]: [...(prev[targetKey] || []), tempTurn]
+        }));
+      }
       setSessionThoughtMap((prev) => ({ ...prev, [targetKey]: "正在深度思考与执行下一步排查..." }));
 
       // 发送消息后重置吸底锁定并模拟鼠标平滑下滑至最新消息处
@@ -1490,30 +1625,63 @@ export const App: React.FC = () => {
         actions: updatedActions,
         assistant_response: "【用户已手动暂停】已终止当前思考与工具调用。",
         elapsed: calculatedElapsed,
+        completed_timestamp: Date.now() / 1000,
         is_paused: true
       };
       return { ...prev, [targetKey]: updated };
     });
   };
 
-  // 用户气泡就地编辑并重发此轮 (对标需求 2)
-  const handleResendTurn = (turnId: number, newPrompt: string) => {
+  // 用户气泡就地编辑或点击重新生成此轮：原地无缝替换中断轮次，彻底解决气泡消失与重复轮次问题
+  const handleResendTurn = async (turnId: number, newPrompt: string) => {
     const targetKey = getSessionKey(projectName, activeSessionId);
     if (runningSessions[targetKey]) {
       handlePause();
     }
 
+    // 1. 原地在前端重置并替换此轮状态（绝对不从视图中删除，彻底消除气泡闪烁与消失）
+    const nowSec = Date.now() / 1000;
     setSessionTurnsMap((prev) => {
       const list = prev[targetKey] || [];
       const turnIdx = list.findIndex((t) => t.turn_id === turnId);
       if (turnIdx === -1) return prev;
-      const keptTurns = list.slice(0, turnIdx);
-      return { ...prev, [targetKey]: keptTurns };
+      const targetTurn = list[turnIdx];
+      const updatedTurn: TurnData = {
+        ...targetTurn,
+        user_prompt: newPrompt,
+        assistant_response: "",
+        thought: "正在深度思考与执行下一步排查...",
+        actions: [],
+        steps: [],
+        tasks: [],
+        critic: undefined,
+        is_paused: false,
+        status_message: "正在分析意图并规划任务清单...",
+        start_timestamp: nowSec,
+        timestamp: nowSec,
+        completed_timestamp: undefined,
+        elapsed: undefined
+      };
+      return { ...prev, [targetKey]: [...list.slice(0, turnIdx), updatedTurn] };
     });
 
-    setTimeout(() => {
-      handleSendPrompt(newPrompt, currentModel, modeName);
-    }, 60);
+    // 2. 后端异步回滚清理可能已中断落盘的历史轮次，避免刷新或切会话后出现重复冗余轮次
+    try {
+      await fetch("http://127.0.0.1:8765/api/sessions/rollback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: projectName,
+          session_id: activeSessionId,
+          restore_disk: false
+        })
+      });
+    } catch (e) {
+      console.warn("Rollback interrupted turn error:", e);
+    }
+
+    // 3. 原地重发
+    handleSendPrompt(newPrompt, currentModel, modeName, [], turnId);
   };
 
   // 撤销最后一轮对话及所有改动 (仅最后一轮可见并可用)
@@ -1546,7 +1714,16 @@ export const App: React.FC = () => {
             delete next[key];
             return next;
           });
-          setTasks([]);
+          setSessionTasksMap((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+          setSessionStatusMap((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
           setHasStarted(false);
 
           // 立即从侧边栏 optimistic 移除该会话，消除幽灵项
@@ -2333,6 +2510,7 @@ export const App: React.FC = () => {
                         onResendTurn={handleResendTurn}
                         onOpenSettings={() => setShowSettings(true)}
                         onRollbackTurn={handleRollbackTurn}
+                        statusMessage={currentSessionStatus}
                       />
                     ))
                   )}
@@ -2352,7 +2530,6 @@ export const App: React.FC = () => {
                     thoughtText={thoughtText}
                     onOpenFile={(p) => setSelectedFile(p)}
                   />
-                  <TaskDrawer tasks={tasks} />
                 </div>
               )}
 
@@ -2365,6 +2542,18 @@ export const App: React.FC = () => {
         {isCurrentChatStarted && activeTab === "chat" && turns.length > 0 && (
           <div className="absolute left-2.5 top-1/2 -translate-y-1/2 z-30 pointer-events-auto">
             <TurnRuler turns={turns} activeTurnId={activeTurnId} onScrollToTurn={handleScrollToTurn} />
+          </div>
+        )}
+
+        {/* 任务规划清单固定卡片 (仅在当前轮次处于执行中时显示，左右边距与对话框严格对齐，上下高度紧凑，点击可展开) */}
+        {isCurrentChatStarted && isCurrentSessionLoading && currentSessionTasks && currentSessionTasks.length > 0 && (
+          <div
+            className="w-full px-6 select-none relative transition-colors duration-150 z-20 pointer-events-auto"
+            style={{ paddingRight: "calc(1.5rem + var(--chat-scrollbar-w, 0px))" }}
+          >
+            <div className="w-full max-w-[57.6rem] mx-auto mb-1">
+              <TaskDrawer tasks={currentSessionTasks} isLoading={isCurrentSessionLoading} defaultOpen={false} />
+            </div>
           </div>
         )}
 

@@ -481,8 +481,17 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
             t = row.get("type")
             data = row.get("data", {})
 
-            # 忽略所有非正整数轮次及控制/回滚事件，杜绝产生虚假的 turn-0
-            if tid <= 0 or t in ("session_cleared", "session_reset", "turn_aborted", "rollback"):
+            if t == "rollback":
+                rolled_id = data.get("turn_id", tid)
+                turns_map.pop(rolled_id, None)
+                continue
+
+            if t in ("session_cleared", "session_reset"):
+                turns_map.clear()
+                continue
+
+            # 忽略所有非正整数轮次及控制事件，杜绝产生虚假的 turn-0
+            if tid <= 0 or t in ("turn_aborted",):
                 continue
 
             if tid not in turns_map:
@@ -493,11 +502,17 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
                     "thought": "",
                     "assistant_response": "",
                     "actions": [],
-                    "steps": []
+                    "steps": [],
+                    "critic": None
                 }
                 tool_results_by_turn[tid] = {}
 
-            if t == "tool_result":
+            if t in ("critic_result", "critic_event"):
+                c_data = data.get("critic") if isinstance(data, dict) and "critic" in data else data
+                if c_data:
+                    turns_map[tid]["critic"] = c_data
+
+            elif t == "tool_result":
                 tc_id = data.get("tool_call_id")
                 if tc_id:
                     tool_results_by_turn[tid][tc_id] = data.get("content", "")
@@ -596,6 +611,8 @@ def parse_project_turns_from_disk(project_name: str, session_id: str) -> Dict[st
                     turns_map[tid]["elapsed"] = round(float(data["elapsed"]), 1)
                 if data.get("user_prompt") and not turns_map[tid]["user_prompt"]:
                     turns_map[tid]["user_prompt"] = data["user_prompt"]
+                if "critic" in data and data["critic"]:
+                    turns_map[tid]["critic"] = data["critic"]
                 wm = data.get("working_memory", {})
                 working_memory_last = wm
                 if wm.get("current_goal") and not turns_map[tid]["user_prompt"]:
@@ -1774,6 +1791,7 @@ class SessionClearRequest(BaseModel):
 class SessionRollbackRequest(BaseModel):
     project: str
     session_id: str
+    restore_disk: bool = True
 
 PINS_FILE = HISTORY_ROOT / "pins_config.json"
 
@@ -2006,7 +2024,7 @@ def rollback_session_turn(req: SessionRollbackRequest):
 
     rolled_turn = cm.completed_turns[-1]
     rolled_turn_id = rolled_turn.turn_id
-    success = cm.rollback_last_turn(restore_disk=True)
+    success = cm.rollback_last_turn(restore_disk=getattr(req, "restore_disk", True))
     restored_files = getattr(cm, "last_rolled_back_files", []) or []
     remaining_count = len(cm.completed_turns)
 

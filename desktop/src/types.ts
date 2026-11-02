@@ -43,6 +43,13 @@ export interface TrajectoryStep {
   timestamp?: number;
 }
 
+export interface CriticDimension {
+  name: string;
+  score?: number;
+  passed?: boolean;
+  detail?: string;
+}
+
 export interface TurnData {
   turn_id: number;
   user_prompt: string;
@@ -57,6 +64,16 @@ export interface TurnData {
   elapsed?: number;
   is_paused?: boolean;
   permission_mode?: string;
+  tasks?: TaskItem[];
+  status_message?: string;
+  critic?: {
+    status: 'reviewing' | 'rejected' | 'passed';
+    reason?: string;
+    score?: number;
+    loop?: number;
+    fix?: string;
+    dimensions?: CriticDimension[];
+  };
 }
 
 export interface MessageItem {

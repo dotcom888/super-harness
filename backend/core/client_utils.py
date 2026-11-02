@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import socket
 import logging
 import urllib.request
@@ -34,11 +35,26 @@ def should_trust_env_proxies() -> bool:
 def create_resilient_openai_client(
     api_key: str, 
     base_url: Optional[str] = None, 
-    timeout: float = 60.0,
+    timeout: Optional[float] = None,
     force_direct: bool = False
 ) -> OpenAI:
+    if timeout is None or timeout <= 0:
+        env_to = os.getenv("LLM_TIMEOUT")
+        try:
+            timeout = float(env_to) if env_to else 180.0
+        except ValueError:
+            timeout = 180.0
+
     trust_env = False if force_direct else should_trust_env_proxies()
-    http_client = httpx.Client(trust_env=trust_env, timeout=timeout)
+    # 为长思考模型 (如 gemini-flash-high / deepseek-reasoner) 与大文件生成提供充足的 read timeout (默认 180s)
+    http_timeout = httpx.Timeout(
+        timeout=timeout,
+        connect=30.0,
+        read=timeout,
+        write=60.0,
+        pool=30.0
+    )
+    http_client = httpx.Client(trust_env=trust_env, timeout=http_timeout)
     return OpenAI(
         api_key=api_key,
         base_url=base_url or None,

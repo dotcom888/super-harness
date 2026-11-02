@@ -136,6 +136,18 @@ def _check_shell_misuse(cmd_clean: str) -> Optional[str]:
                 f"专用工具优势：优先借助 git ls-files 极速检索、自动遵守 .gitignore、避免递归扫盘产生海量噪音。"
             )
 
+        # 纯原子复杂 python -c 拦截与安全重定向 (防范 Windows cmd/PowerShell 字符串引号截断死循环)
+        if first.startswith("python -c") or first.startswith("python.exe -c"):
+            if any(kw in first for kw in ["def ", "class ", "import ", "'''", '"""']) or len(first) > 80:
+                return (
+                    f"【工具选型重定向建议】：检测到你在尝试使用终端 'python -c' 执行复杂/多行 Python 脚本。\n"
+                    f"在 Windows cmd 终端下，复杂内联代码极易因控制台双引号截断与缩进丢失而触发 SyntaxError/IndentationError 死循环。\n"
+                    f"正确做法：\n"
+                    f"1. 调用 write_file 编写临时 Python 脚本（例如 temp_verify.py）；\n"
+                    f"2. 调用 run_shell(command='python temp_verify.py') 安全运行；\n"
+                    f"3. 若任务是生成 HTML 网页或小游戏，请直接调用 write_file 将完整 HTML 代码写入桌面，无需在终端死磕算法求解器！"
+                )
+
     return None
 
 def __getattr__(name: str):

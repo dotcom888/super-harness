@@ -87,6 +87,10 @@ class ReActAgent:
             )
 
         self.client = create_resilient_openai_client(api_key=self.api_key, base_url=self.base_url)
+        from core.planner import TaskPlanner
+        from core.critic import CriticVerifier
+        self.planner = TaskPlanner(client=self.client, model=self.model)
+        self.critic = CriticVerifier(client=self.client, model=self.model)
 
         # 自动挂载来自外部配置的 MCP 工具
         self.abort_requested = False
@@ -334,7 +338,11 @@ class ReActAgent:
         thought_callback: Optional[Callable[[str], None]] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         display_prompt: Optional[str] = None,
-        llm_content: Optional[Any] = None
+        llm_content: Optional[Any] = None,
+        task_callback: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
+        task_progress_callback: Optional[Callable[[str, bool], None]] = None,
+        critic_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        status_callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> str:
         """
         运行 ReAct 核心循环：
@@ -347,8 +355,32 @@ class ReActAgent:
         tools_json = json.dumps(tools_schema, ensure_ascii=False) if tools_schema else ""
         tools_tokens = self.context_manager.token_counter.count_text(tools_json)
 
+        # 1. 前置智能体：任务拆解与意图规划 (Task Planner)
+        decomposed_tasks: List[Dict[str, Any]] = []
+        if getattr(self, "planner", None) is not None:
+            try:
+                if status_callback:
+                    status_callback({"stage": "planning", "message": "正在分析意图并规划任务清单..."})
+                def _on_planner_status(msg: str):
+                    if status_callback:
+                        status_callback({"stage": "planning", "message": msg})
+                decomposed_tasks = self.planner.plan_tasks(user_prompt, status_callback=_on_planner_status)
+                if decomposed_tasks and task_callback:
+                    task_callback(decomposed_tasks)
+            except Exception as plan_err:
+                logger.warning(f"Planner task plan error: {plan_err}")
+
         # 开启新原子轮次（记录展示提问与附件元数据，LLM 推理直接使用增广文本或多模态结构）
+        # 将任务规划注入到 user 提问末尾，保护前序系统提示词与历史轮次的前缀 KV-Cache 稳态
         effective_llm_content = llm_content if llm_content is not None else user_prompt
+        if decomposed_tasks:
+            plan_injection = "\n\n【任务规划清单】请按序推进并逐项完成以下分解任务：\n" + "\n".join([f"{i+1}. {t['title']}" for i, t in enumerate(decomposed_tasks)])
+            if isinstance(effective_llm_content, str):
+                effective_llm_content = effective_llm_content + plan_injection
+            elif isinstance(effective_llm_content, list) and len(effective_llm_content) > 0:
+                if isinstance(effective_llm_content[0], dict) and "text" in effective_llm_content[0]:
+                    effective_llm_content[0]["text"] += plan_injection
+
         self.context_manager.start_new_turn(
             display_prompt or user_prompt, 
             attachments=attachments,
@@ -389,6 +421,10 @@ class ReActAgent:
             self.max_steps = 0
         step = 0
         force_wrapup_active = False
+        critic_loop = 0
+        max_critic_loops = 2
+        total_tool_calls_count = 0
+        has_written_files = False
 
         # 前缀缓存稳态保障：User 提问消息全周期保持不可变，从 Step 2 起的进度与阶段提示均单调追加至 Tool Result 末尾
 
@@ -479,6 +515,12 @@ class ReActAgent:
                     default_ui.render_step_status(step, self.max_steps, step_status)
                 elif verbose:
                     print(f"[Step {step}] Agent 正在思考{step_status}...")
+
+                if status_callback:
+                    if is_last_step or force_wrapup_active:
+                        status_callback({"stage": "thinking", "step": step, "message": "正在汇总排查事实并组织最终答复..."})
+                    else:
+                        status_callback({"stage": "thinking", "step": step, "message": f"正在进行第 {step} 步深度思考与推理..."})
 
                 # 3. 前缀缓存稳态保护 (Strict Append-Only)：
                 # User 消息在 Step 1 注入初始 Banner 后终身只读，绝不回溯改写任何历史 User / Tool 消息。
@@ -581,6 +623,10 @@ class ReActAgent:
                             or usage.get("cache_read_input_tokens", 0)
                         )
 
+                    prompt_toks = int(prompt_toks) if isinstance(prompt_toks, (int, float)) else 0
+                    comp_toks = int(comp_toks) if isinstance(comp_toks, (int, float)) else 0
+                    total_toks = int(total_toks) if isinstance(total_toks, (int, float)) else (prompt_toks + comp_toks)
+                    cached_toks = int(cached_toks) if isinstance(cached_toks, (int, float)) else 0
                     self.context_manager.record_api_usage(prompt_toks, comp_toks, cached_toks)
                     if is_ui:
                         default_ui.render_token_usage(prompt_toks, comp_toks, total_toks, self.model)
@@ -601,6 +647,7 @@ class ReActAgent:
                 assistant_dict = self._convert_response_to_dict(response_msg)
 
                 if assistant_dict.get("tool_calls"):
+                    total_tool_calls_count += len(assistant_dict["tool_calls"])
                     messages.append(assistant_dict)
                     self.context_manager.add_assistant_message(assistant_dict)
 
@@ -707,8 +754,54 @@ class ReActAgent:
                     if protected_results and next_banner:
                         protected_results[-1]["content"] += f"\n\n{next_banner}"
 
+                    # 任务进度动态推进与打钩
+                    if decomposed_tasks and task_progress_callback:
+                        called_names = []
+                        called_args = []
+                        for tc in assistant_dict.get("tool_calls", []):
+                            fn = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", None)
+                            fn_name = fn.get("name", "") if isinstance(fn, dict) else getattr(fn, "name", "")
+                            fn_arg = fn.get("arguments", "") if isinstance(fn, dict) else getattr(fn, "arguments", "")
+                            if fn_name:
+                                called_names.append(fn_name)
+                                called_args.append(str(fn_arg))
+
+                        is_inspect_action = any(any(k in n for k in ["shell", "read", "grep", "find", "view", "outline"]) for n in called_names)
+                        is_write_action = any(any(k in n for k in ["write", "patch"]) for n in called_names)
+                        is_verify_action = any(any(k in n for k in ["test", "pytest", "npm"]) for n in called_names)
+
+                        if is_write_action:
+                            has_written_files = True
+
+                        num_tasks = len(decomposed_tasks)
+
+                        # 1. 第一项任务（环境探测/定位/分析/设计）
+                        if num_tasks > 0 and not decomposed_tasks[0].get("completed"):
+                            if is_inspect_action or is_write_action:
+                                decomposed_tasks[0]["completed"] = True
+                                task_progress_callback(decomposed_tasks[0]["id"], True)
+
+                        # 2. 第二项任务（核心实现/代码编写/文件落地）：必须在第一项任务已完成的前提下推进
+                        if num_tasks > 1 and decomposed_tasks[0].get("completed") and not decomposed_tasks[1].get("completed"):
+                            if is_write_action:
+                                decomposed_tasks[1]["completed"] = True
+                                task_progress_callback(decomposed_tasks[1]["id"], True)
+
+                        # 3. 第三项及后续任务（验证与验收）：必须在前序各项任务（分析与实现）均已完成的前提下推进
+                        if (
+                            num_tasks > 2
+                            and all(decomposed_tasks[i].get("completed") for i in range(2))
+                            and not decomposed_tasks[2].get("completed")
+                        ):
+                            # 必须在代码已经落地 (has_written_files) 之后，执行专门验证/测试或读取回验操作
+                            if is_verify_action or (has_written_files and is_inspect_action):
+                                decomposed_tasks[2]["completed"] = True
+                                task_progress_callback(decomposed_tasks[2]["id"], True)
+
                     messages.extend(protected_results)
                     self.context_manager.add_tool_results(protected_results)
+                    if status_callback:
+                        status_callback({"stage": "thinking", "step": step + 1, "message": f"正在评估工具执行结果并规划第 {step + 1} 步..."})
                     if new_loop_state == LoopState.FORCE_WRAPUP:
                         force_wrapup_active = True
                         if verbose:
@@ -735,10 +828,117 @@ class ReActAgent:
                             print(f"  [Thought] {thought_str}")
 
                     final_text = assistant_dict.get("content") or "（无返回内容）"
+
+                    # 3. 后置智能体：质量审查与验收 (Critic Verifier)
+                    # 3. 后置智能体：质量审查与验收 (Critic Verifier)
+                    # 严格执行【工具调用依赖原则】：
+                    # 仅当本轮实际调用了工具（执行了代码变更、命令或文件操作，total_tool_calls_count > 0）时才触发质量审查验收！
+                    # 纯对话/问答/闲聊（未调用任何工具，total_tool_calls_count == 0）完全旁路 Critic，
+                    # 不触发审查、不调用大模型、不广播 critic 事件，前端不展示任何质检卡片。
+                    should_run_critic = (
+                        getattr(self, "critic", None) is not None
+                        and not getattr(self, "abort_requested", False)
+                        and total_tool_calls_count > 0
+                    )
+
+                    if should_run_critic:
+                        if status_callback:
+                            status_callback({"stage": "critic", "message": "正在由 Critic 审查智能体进行质量验收..."})
+                        if critic_callback:
+                            critic_callback({"status": "reviewing", "loop": critic_loop + 1})
+                        ws_root = getattr(self.session_manager, "workspace", None)
+                        ws_path = getattr(ws_root, "root", None) if ws_root else None
+                        critic_res = self.critic.verify_turn(
+                            user_prompt=user_prompt,
+                            tasks=decomposed_tasks,
+                            assistant_reply=final_text,
+                            workspace_root=ws_path
+                        )
+                        if not critic_res.get("passed", True):
+                            critic_loop += 1
+                            if critic_loop <= max_critic_loops:
+                                rej_payload = {
+                                    "status": "rejected",
+                                    "reason": critic_res.get("reason", "审查未通过"),
+                                    "fix": critic_res.get("actionable_fix", ""),
+                                    "loop": critic_loop,
+                                    "score": critic_res.get("score", 2.5),
+                                    "dimensions": critic_res.get("dimensions", [])
+                                }
+                                if critic_callback:
+                                    critic_callback(rej_payload)
+                                if hasattr(self.context_manager, "record_critic"):
+                                    self.context_manager.record_critic(rej_payload)
+
+                                if verbose:
+                                    print(f"\n[质量审查驳回 (第 {critic_loop}/{max_critic_loops} 次)] {critic_res.get('reason')}")
+                                rejection_msg = {
+                                    "role": "user",
+                                    "content": (
+                                        f"【质量审查驳回 (第 {critic_loop}/{max_critic_loops} 次)】\n"
+                                        f"- 驳回原因: {critic_res.get('reason')}\n"
+                                        f"{critic_res.get('actionable_fix')}\n"
+                                        f"请继续排查并修正上述问题，确保任务高质量闭环！"
+                                    )
+                                }
+                                messages.append(assistant_dict)
+                                self.context_manager.add_assistant_message(assistant_dict)
+                                messages.append(rejection_msg)
+                                self.context_manager.add_user_message(rejection_msg["content"])
+                                continue
+                            else:
+                                limit_payload = {
+                                    "status": "passed",
+                                    "reason": f"已达最大质检重试上限 ({max_critic_loops} 次)，已放行交付。",
+                                    "score": 3.0,
+                                    "dimensions": critic_res.get("dimensions", [])
+                                }
+                                if critic_callback:
+                                    critic_callback(limit_payload)
+                                if hasattr(self.context_manager, "record_critic"):
+                                    self.context_manager.record_critic(limit_payload)
+                        else:
+                            passed_payload = {
+                                "status": "passed",
+                                "reason": critic_res.get("reason", "质量审查通过"),
+                                "score": critic_res.get("score", 5.0),
+                                "dimensions": critic_res.get("dimensions", [])
+                            }
+                            if critic_callback:
+                                critic_callback(passed_payload)
+                            if hasattr(self.context_manager, "record_critic"):
+                                self.context_manager.record_critic(passed_payload)
+
+                            if decomposed_tasks and task_progress_callback:
+                                for t in decomposed_tasks:
+                                    if not t.get("completed"):
+                                        t["completed"] = True
+                                        task_progress_callback(t["id"], True)
+                    else:
+                        # 纯对话/未调用工具：若此前有计划清单，收尾时平滑标记完成（绝不调用 Critic，不发送 critic_callback）
+                        if decomposed_tasks and task_progress_callback:
+                            for t in decomposed_tasks:
+                                if not t.get("completed"):
+                                    t["completed"] = True
+                                    task_progress_callback(t["id"], True)
+
                     if token_callback and final_text:
-                        # 流式切片推送给客户端
-                        step_len = max(2, len(final_text) // 25)
-                        for i in range(0, len(final_text), step_len):
+                        # 细腻平滑流式推送（保障逐字/逐词流式打字动画与阅读节奏，杜绝瞬间整块抛出）
+                        total_len = len(final_text)
+                        if total_len <= 150:
+                            chunk_size = 2
+                            sleep_delay = 0.025
+                        elif total_len <= 600:
+                            chunk_size = 3
+                            sleep_delay = 0.02
+                        elif total_len <= 1500:
+                            chunk_size = 6
+                            sleep_delay = 0.018
+                        else:
+                            chunk_size = 10
+                            sleep_delay = 0.015
+
+                        for i in range(0, total_len, chunk_size):
                             if getattr(self, "abort_requested", False):
                                 self.abort_requested = False
                                 pause_msg = "【用户已手动暂停】已终止当前思考与工具调用。"
@@ -746,8 +946,8 @@ class ReActAgent:
                                 self.context_manager.finish_current_turn()
                                 turn_finished = True
                                 return pause_msg
-                            token_callback(final_text[i:i+step_len])
-                            time.sleep(0.015)
+                            token_callback(final_text[i:i+chunk_size])
+                            time.sleep(sleep_delay)
                     self.context_manager.add_assistant_message(assistant_dict)
                     self.context_manager.finish_current_turn()
                     turn_finished = True
