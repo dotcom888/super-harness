@@ -234,7 +234,11 @@ export const App: React.FC = () => {
   // 轮次尺点击定位平滑跳转
   const handleScrollToTurn = (turnId: number) => {
     setActiveTurnId(turnId);
-    const el = document.getElementById(`turn-user-${turnId}`) || document.getElementById(`turn-container-${turnId}`);
+    const el =
+      (activeTab === "trace" ? document.getElementById(`turn-trajectory-${turnId}`) : null) ||
+      document.getElementById(`turn-user-${turnId}`) ||
+      document.getElementById(`turn-container-${turnId}`) ||
+      document.getElementById(`turn-trajectory-${turnId}`);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       if (chatContainerRef.current) {
@@ -1265,7 +1269,10 @@ export const App: React.FC = () => {
 
         let foundId = null;
         for (const t of turns) {
-          const tEl = document.getElementById(`turn-container-${t.turn_id}`);
+          const tEl =
+            (activeTab === "trace" ? document.getElementById(`turn-trajectory-${t.turn_id}`) : null) ||
+            document.getElementById(`turn-container-${t.turn_id}`) ||
+            document.getElementById(`turn-trajectory-${t.turn_id}`);
           if (tEl) {
             const rect = tEl.getBoundingClientRect();
             if (rect.top <= targetY && rect.bottom >= targetY) {
@@ -2529,6 +2536,8 @@ export const App: React.FC = () => {
                     rawActions={actions}
                     thoughtText={thoughtText}
                     onOpenFile={(p) => setSelectedFile(p)}
+                    projectName={projectName}
+                    sessionId={activeSessionId}
                   />
                 </div>
               )}
@@ -2538,8 +2547,8 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* 对话轮次记录导航尺 (贴近左侧边栏，垂直居中固定，绝对不随页面滚动，完全避免与 super 头像重叠) */}
-        {isCurrentChatStarted && activeTab === "chat" && turns.length > 0 && (
+        {/* 对话与轨迹轮次记录导航尺 (贴近左侧边栏，垂直居中固定，绝对不随页面滚动，支持对话流与轨迹流双向精准锚点定位) */}
+        {isCurrentChatStarted && (activeTab === "chat" || activeTab === "trace") && turns.length > 0 && (
           <div className="absolute left-2.5 top-1/2 -translate-y-1/2 z-30 pointer-events-auto">
             <TurnRuler turns={turns} activeTurnId={activeTurnId} onScrollToTurn={handleScrollToTurn} />
           </div>

@@ -534,6 +534,11 @@ class ContextManager:
                 "tool_call_id": item.get("tool_call_id", ""),
                 "content": str(item.get("content", ""))
             }
+            if "elapsed" in item and item["elapsed"] is not None:
+                try:
+                    tool_msg["elapsed"] = float(item["elapsed"])
+                except Exception:
+                    pass
             self.current_turn.add_message(tool_msg)
             self._append_to_disk("tool_result", tool_msg)
 

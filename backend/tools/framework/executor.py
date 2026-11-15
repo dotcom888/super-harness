@@ -37,11 +37,15 @@ class ToolExecutor:
                 "content": error_msg
             }
 
+        import time
+        start_t = time.time()
         result = self.registry.execute(func_name, args)
+        elapsed = round(max(0.01, time.time() - start_t), 2)
         return func_name, json.dumps(args, ensure_ascii=False), {
             "role": "tool",
             "tool_call_id": call_id,
-            "content": str(result)
+            "content": str(result),
+            "elapsed": elapsed
         }
 
     def _execute_and_log(self, tc: Any, verbose: bool = True) -> Dict[str, Any]:
@@ -70,7 +74,9 @@ class ToolExecutor:
         import time
         start_t = time.time()
         func_name, args_str, msg = self._execute_single(tc)
-        elapsed = time.time() - start_t
+        elapsed = round(max(0.01, time.time() - start_t), 2)
+        if isinstance(msg, dict):
+            msg['elapsed'] = elapsed
 
         content = msg.get("content", "")
         if is_ui:

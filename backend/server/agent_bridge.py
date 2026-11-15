@@ -111,9 +111,11 @@ class StreamingToolExecutor(ToolExecutor):
 
         start_time = time.time()
         func_name, args_str, msg = super()._execute_single(tc)
-        elapsed = time.time() - start_time
+        elapsed = round(max(0.01, time.time() - start_time), 2)
         self.total_tool_elapsed += elapsed
         self.tool_steps_count += 1
+        if isinstance(msg, dict):
+            msg['elapsed'] = elapsed
 
         content = msg.get("content", "")
         is_err = any(k in content for k in ["【执行超时】", "【并发执行异常】", "【安全拦截拒绝】", "【用户拒绝】", "执行失败:", "Error:"])
@@ -795,7 +797,7 @@ class AgentBridge:
         elif cmd_lower.startswith("/version"):
             resp = (
                 "### 🚀 super 桌面智能体版本\n\n"
-                "- **客户端版本**：`v5.7.16`\n"
+                "- **客户端版本**：`v5.7.18`\n"
                 "- **后端协议**：双轨真实思维链（Thinking + Action）流式驱动\n"
                 "- **架构设计**：Super Harness + Desktop GUI\n"
             )

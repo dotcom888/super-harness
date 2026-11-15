@@ -138,3 +138,69 @@ export interface UserInputRequest {
   session_id?: string;
   project?: string;
 }
+
+export interface TrajectoryMetric {
+  label: string;
+  value: string;
+  sub?: string;
+  status: 'good' | 'warning' | 'info' | 'error';
+}
+
+export interface TrajectoryDiagnostic {
+  type: 'pass' | 'warning' | 'info';
+  title: string;
+  detail: string;
+}
+
+export interface TrajectoryStepAnnotation {
+  agent_role?: 'planner' | 'worker' | 'critic' | string;
+  diagnosis?: string;
+  badge_type?: 'success' | 'warning' | 'info' | 'error' | string;
+  is_redundant?: boolean;
+}
+
+export interface TurnEvalItem {
+  turn_id: number;
+  user_prompt?: string;
+  health_score: number;
+  health_level: 'A+' | 'A' | 'B' | 'C' | string;
+  tool_calls_count: number;
+  tool_errors_count: number;
+  tool_success_rate: string;
+  redundant_calls_count: number;
+  elapsed: string;
+  tokens: number;
+  task_completion_rate: string;
+  critic_score?: string;
+  critic_status?: 'passed' | 'rejected' | 'reviewing' | 'none' | string;
+  critic_reason?: string;
+  turn_summary: string;
+  step_ids?: string[];
+}
+
+export interface TrajectoryEvalReport {
+  session_id: string;
+  project: string;
+  timestamp: number;
+  health_score: number;
+  health_level: 'A+' | 'A' | 'B' | 'C' | string;
+  summary: string;
+  metrics: {
+    tool_success_rate: string;
+    tool_calls_count: number;
+    tool_errors_count: number;
+    efficiency_score: string;
+    redundant_calls_count: number;
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_elapsed: string;
+    task_completion_rate: string;
+    critic_pass_rate: string;
+    self_healing_count: number;
+  };
+  metric_cards: TrajectoryMetric[];
+  diagnostics: TrajectoryDiagnostic[];
+  step_annotations?: Record<string, TrajectoryStepAnnotation>;
+  turns_eval?: TurnEvalItem[];
+}

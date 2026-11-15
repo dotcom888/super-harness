@@ -695,11 +695,17 @@ class ReActAgent:
                             zone=current_zone,
                             tool_name=fname
                         )
-                        protected_results.append({
+                        res_item = {
                             "role": "tool",
                             "tool_call_id": call_id,
                             "content": safe_content
-                        })
+                        }
+                        if "elapsed" in tr and tr["elapsed"] is not None:
+                            try:
+                                res_item["elapsed"] = float(tr["elapsed"])
+                            except Exception:
+                                pass
+                        protected_results.append(res_item)
 
                     # 观察阶段：更新工作区感知状态
                     for tc in assistant_dict["tool_calls"]:

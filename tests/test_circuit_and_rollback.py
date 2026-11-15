@@ -204,6 +204,6 @@ async def test_slash_commands_and_turn_persistence(tmp_path):
             session_id=sid,
             project_name="_general"
         )
-        assert "v5.7.16" in resp_ver
+        assert "v5.7.18" in resp_ver
     finally:
         default_policy.mode = orig_mode
